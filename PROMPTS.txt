@@ -1,0 +1,33 @@
+=== Príkazy do terminálu (spustenie) ===
+
+Frontend (z c:\GPv2):
+  npm install
+  npm run dev
+
+Backend (druhý terminál):
+  cd c:\GPv2\backend
+  npm install
+  npm run start:dev
+
+Lint / build:
+  cd c:\GPv2
+  npm run lint
+  npm run build
+
+Zobrazenie tohto súboru v PowerShell:
+  Get-Content c:\GPv2\PROMPTS.txt
+
+
+=== Prompty do Cursor chatu (skopíruj jeden blok) ===
+
+[OCR]
+Pridaj na NestJS endpoint POST /quicksplits/:id/ocr: nahratie obrázka, Google Document AI Enterprise OCR, z výstupného textu extrahuj sumu v EUR pre slovenský bloček, ulož totalCents na split. API kľúče len v backend .env. Na fronte prepni tlačidlo „Naskenovať bloček“ v QuickSplitScreen tak, aby volalo endpoint a predvyplnilo sumu. Aktualizuj README.
+
+[Mine / obnova splitu]
+Uprav QuickSplitScreen a API tak, aby prihlásený vlastník vedel otvoriť split z GET /quicksplits/mine bez join tokenu (ownerUid). Pri chybe zobraz zrozumiteľnú hlášku. README stručne dopln.
+
+[Bug]
+Repro: [kroky]. Očakávanie: [čo má byť]. Skutočnosť: [chyba v konzole alebo UI]. Projekt GPv2, Next + Nest backend.
+
+[UI len]
+Uprav len components/quicksplit/QuickSplitScreen.tsx: [konkrétne zmeny]. Nemeniť API ani README.

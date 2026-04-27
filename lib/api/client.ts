@@ -1,0 +1,183 @@
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+async function fetchWithAuth(url: string, options: RequestInit = {}) {
+  try {
+    const token = await getAuthToken();
+    
+    const response = await fetch(`${API_BASE_URL}${url}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }));
+      throw new Error(error.message || 'Request failed');
+    }
+
+    return response.json();
+  } catch (error: any) {
+    if (error.message?.includes('Failed to fetch') || error.message?.includes('ERR_CONNECTION_REFUSED')) {
+      throw new Error('Backend server nie je spustený. Spustite ho pomocou: cd backend && npm run start:dev');
+    }
+    throw error;
+  }
+}
+
+async function getAuthToken(): Promise<string> {
+  const { auth } = await import('@/lib/firebase/config');
+  const { onAuthStateChanged } = await import('firebase/auth');
+  
+  return new Promise((resolve, reject) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      unsubscribe();
+      if (user) {
+        user.getIdToken().then(resolve).catch(reject);
+      } else {
+        reject(new Error('User not authenticated'));
+      }
+    });
+  });
+}
+
+async function getOptionalAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const { auth } = await import('@/lib/firebase/config');
+    const u = auth.currentUser;
+    if (!u) return {};
+    const token = await u.getIdToken();
+    return { Authorization: `Bearer ${token}` };
+  } catch {
+    return {};
+  }
+}
+
+export type QuickSplitRequestTokens = {
+  joinToken?: string;
+  adminToken?: string;
+  participantSecret?: string;
+};
+
+async function fetchQuicksplit(path: string, options: RequestInit & QuickSplitRequestTokens = {}) {
+  const { joinToken, adminToken, participantSecret, ...rest } = options;
+  try {
+    const authH = await getOptionalAuthHeaders();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...authH,
+      ...(rest.headers as Record<string, string>),
+    };
+    if (joinToken) headers['X-Join-Token'] = joinToken;
+    if (adminToken) headers['X-Admin-Token'] = adminToken;
+    if (participantSecret) headers['X-Participant-Secret'] = participantSecret;
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...rest,
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }));
+      throw new Error(error.message || 'Request failed');
+    }
+
+    return response.json();
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('Failed to fetch') || msg.includes('ERR_CONNECTION_REFUSED')) {
+      throw new Error('Backend server nie je spustený. Spustite ho pomocou: cd backend && npm run start:dev');
+    }
+    throw error;
+  }
+}
+
+export const api = {
+  users: {
+    get: async (userId: string) => {
+      return fetchWithAuth(`/users/${userId}`);
+    },
+    update: async (userId: string, data: {
+      phoneNumber?: string | null;
+      residence?: string | null;
+      fullName?: string | null;
+      iban?: string | null;
+    }) => {
+      return fetchWithAuth(`/users/${userId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    },
+    updateProfileImage: async (userId: string, imageUrl: string) => {
+      return fetchWithAuth(`/users/${userId}/profile-image`, {
+        method: 'POST',
+        body: JSON.stringify({ imageUrl }),
+      });
+    },
+  },
+
+  quicksplits: {
+    create: (body: { totalCents: number; creatorDisplayName?: string }) =>
+      fetchQuicksplit('/quicksplits', { method: 'POST', body: JSON.stringify(body) }),
+
+    get: (splitId: string, h: QuickSplitRequestTokens) =>
+      fetchQuicksplit(`/quicksplits/${splitId}`, { method: 'GET', ...h }),
+
+    update: (splitId: string, body: { totalCents?: number; payerParticipantId?: string }, h: QuickSplitRequestTokens) =>
+      fetchQuicksplit(`/quicksplits/${splitId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        ...h,
+      }),
+
+    join: (splitId: string, body: { displayName: string }, joinToken: string) =>
+      fetchQuicksplit(`/quicksplits/${splitId}/join`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        joinToken,
+      }),
+
+    updateParticipantPayment: (
+      splitId: string,
+      participantId: string,
+      body: { iban?: string | null },
+      h: QuickSplitRequestTokens,
+    ) =>
+      fetchQuicksplit(`/quicksplits/${splitId}/participants/${participantId}/payment`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        ...h,
+      }),
+
+    mine: async () => fetchWithAuth('/quicksplits/mine'),
+
+    activities: (
+      splitId: string,
+      params: QuickSplitRequestTokens & { afterId?: string; limit?: number },
+    ) => {
+      const { afterId, limit, ...tokens } = params;
+      const q = new URLSearchParams();
+      if (afterId) q.set('afterId', afterId);
+      if (limit) q.set('limit', String(limit));
+      const qs = q.toString();
+      return fetchQuicksplit(
+        `/quicksplits/${splitId}/activities${qs ? `?${qs}` : ''}`,
+        { method: 'GET', ...tokens },
+      );
+    },
+
+    markParticipantPaid: (
+      splitId: string,
+      participantId: string,
+      paid: boolean,
+      h: QuickSplitRequestTokens,
+    ) =>
+      fetchQuicksplit(`/quicksplits/${splitId}/participants/${participantId}/paid`, {
+        method: 'PATCH',
+        body: JSON.stringify({ paid }),
+        ...h,
+      }),
+  },
+};

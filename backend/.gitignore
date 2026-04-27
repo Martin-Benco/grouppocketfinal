@@ -1,0 +1,7 @@
+dist
+node_modules
+.env
+*.log
+coverage
+service-account.json
+service-account-*.json

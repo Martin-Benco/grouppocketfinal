@@ -12,22 +12,27 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
 };
 
-if (!firebaseConfig.apiKey) {
-  throw new Error("Firebase API Key nie je nastavený. Vytvorte .env.local súbor s Firebase credentials.");
+const firebaseEnabled = Boolean(firebaseConfig.apiKey);
+
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+let storage: FirebaseStorage | null = null;
+
+if (firebaseEnabled) {
+  try {
+    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+    auth = getAuth(app);
+    db = getFirestore(app);
+    storage = getStorage(app);
+  } catch (error) {
+    console.error("Firebase nie je správne nakonfigurovaný. Skontrolujte .env.local súbor.", error);
+  }
+} else {
+  console.warn("Firebase API Key nie je nastavený. Vytvorte .env.local súbor s Firebase credentials.");
 }
 
-let app: FirebaseApp;
-let auth: Auth;
-let db: Firestore;
-let storage: FirebaseStorage;
+export const FIREBASE_SETUP_ERROR =
+  "Firebase nie je nakonfigurovaný. Skopírujte .env.local.example na .env.local a doplňte NEXT_PUBLIC_FIREBASE_* premenné.";
 
-try {
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
-  db = getFirestore(app);
-  storage = getStorage(app);
-} catch (error) {
-  throw new Error("Firebase nie je správne nakonfigurovaný. Skontrolujte .env.local súbor.");
-}
-
-export { auth, db, storage };
+export { app, auth, db, storage, firebaseEnabled };

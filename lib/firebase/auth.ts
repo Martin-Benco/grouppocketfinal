@@ -15,14 +15,22 @@ import {
   User,
   onAuthStateChanged,
 } from "firebase/auth";
-import { auth } from "./config";
+import { auth, FIREBASE_SETUP_ERROR } from "./config";
 
 const googleProvider = new GoogleAuthProvider();
 const appleProvider = new OAuthProvider("apple.com");
 
+const getRequiredAuth = () => {
+  if (!auth) {
+    throw new Error(FIREBASE_SETUP_ERROR);
+  }
+  return auth;
+};
+
 export const signInWithGoogle = async () => {
   try {
-    const result = await signInWithPopup(auth, googleProvider);
+    const authInstance = getRequiredAuth();
+    const result = await signInWithPopup(authInstance, googleProvider);
     return result;
   } catch (error) {
     throw error;
@@ -31,7 +39,8 @@ export const signInWithGoogle = async () => {
 
 export const signInWithApple = async () => {
   try {
-    const result = await signInWithPopup(auth, appleProvider);
+    const authInstance = getRequiredAuth();
+    const result = await signInWithPopup(authInstance, appleProvider);
     return result;
   } catch (error) {
     throw error;
@@ -40,7 +49,8 @@ export const signInWithApple = async () => {
 
 export const signInWithEmail = async (email: string, password: string) => {
   try {
-    const result = await signInWithEmailAndPassword(auth, email, password);
+    const authInstance = getRequiredAuth();
+    const result = await signInWithEmailAndPassword(authInstance, email, password);
     return result.user;
   } catch (error) {
     throw error;
@@ -49,7 +59,8 @@ export const signInWithEmail = async (email: string, password: string) => {
 
 export const signUpWithEmail = async (email: string, password: string) => {
   try {
-    const result = await createUserWithEmailAndPassword(auth, email, password);
+    const authInstance = getRequiredAuth();
+    const result = await createUserWithEmailAndPassword(authInstance, email, password);
     return result.user;
   } catch (error) {
     throw error;
@@ -58,23 +69,32 @@ export const signUpWithEmail = async (email: string, password: string) => {
 
 export const signOut = async () => {
   try {
-    await firebaseSignOut(auth);
+    const authInstance = getRequiredAuth();
+    await firebaseSignOut(authInstance);
   } catch (error) {
     throw error;
   }
 };
 
 export const getCurrentUser = (): User | null => {
+  if (!auth) {
+    return null;
+  }
   return auth.currentUser;
 };
 
 export const onAuthChange = (callback: (user: User | null) => void) => {
+  if (!auth) {
+    callback(null);
+    return () => {};
+  }
   return onAuthStateChanged(auth, callback);
 };
 
 export const updateUserEmail = async (newEmail: string) => {
   try {
-    const user = auth.currentUser;
+    const authInstance = getRequiredAuth();
+    const user = authInstance.currentUser;
     if (!user) {
       throw new Error("Používateľ nie je prihlásený");
     }
@@ -86,7 +106,8 @@ export const updateUserEmail = async (newEmail: string) => {
 
 export const updateUserPassword = async (currentPassword: string, newPassword: string) => {
   try {
-    const user = auth.currentUser;
+    const authInstance = getRequiredAuth();
+    const user = authInstance.currentUser;
     if (!user || !user.email) {
       throw new Error("Používateľ nie je prihlásený");
     }
@@ -110,7 +131,8 @@ export const updateUserPassword = async (currentPassword: string, newPassword: s
 
 export const addUserPassword = async (newPassword: string) => {
   try {
-    const user = auth.currentUser;
+    const authInstance = getRequiredAuth();
+    const user = authInstance.currentUser;
     if (!user) {
       throw new Error("Používateľ nie je prihlásený");
     }
@@ -140,11 +162,12 @@ export const addUserPassword = async (newPassword: string) => {
 
 export const resetPassword = async (email: string) => {
   try {
+    const authInstance = getRequiredAuth();
     // Skúsiť zistiť, aké metódy prihlásenia má účet
     let signInMethods: string[] = [];
     
     try {
-      signInMethods = await fetchSignInMethodsForEmail(auth, email);
+      signInMethods = await fetchSignInMethodsForEmail(authInstance, email);
     } catch (fetchError: any) {
       // Ak fetchSignInMethodsForEmail zlyhá s user-not-found, účet neexistuje
       if (fetchError.code === "auth/user-not-found") {
@@ -159,7 +182,7 @@ export const resetPassword = async (email: string) => {
     if (signInMethods.length === 0) {
       // Skúsiť odoslať e-mail - Firebase z bezpečnostných dôvodov vždy vráti úspech
       // Takže nemôžeme spoľahlivo zistiť, či účet existuje
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(authInstance, email);
       return;
     }
     
@@ -172,7 +195,7 @@ export const resetPassword = async (email: string) => {
     }
     
     // Ak účet existuje a má heslo, odoslať e-mail
-    await sendPasswordResetEmail(auth, email);
+    await sendPasswordResetEmail(authInstance, email);
   } catch (error: any) {
     // Ak je to naša vlastná chyba, vyhodíme ju
     if (error.message === "Účet s týmto e-mailom neexistuje" || 

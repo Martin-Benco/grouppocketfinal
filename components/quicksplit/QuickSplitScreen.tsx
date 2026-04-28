@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Copy, ScanLine, Users } from "lucide-react";
 import { api, type QuickSplitRequestTokens } from "@/lib/api/client";
 import {
@@ -12,6 +13,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/contexts/AuthContext";
+import { SplitModePanel } from "@/components/quicksplit/SplitModePanel";
+import {
+  type SplitModePersisted,
+  loadPersistedSplitMode,
+  savePersistedSplitMode,
+  computeAmountsByMode,
+  defaultPersisted,
+} from "@/lib/quicksplit/split-mode-logic";
 
 type ActivityType =
   | "split_created"
@@ -183,6 +192,7 @@ export function QuickSplitScreen() {
   const [payFlowDeadlineTs, setPayFlowDeadlineTs] = useState<number | null>(null);
   const [payFlowSeconds, setPayFlowSeconds] = useState(60);
   const payFlowFinalizedRef = useRef(false);
+  const [splitUi, setSplitUi] = useState<SplitModePersisted>(() => defaultPersisted([]));
 
   const loadSplit = useCallback(async (splitId: string) => {
     const s = readQsSession(splitId);
@@ -255,6 +265,29 @@ export function QuickSplitScreen() {
     if (!split || !myParticipantId) return null;
     return split.participants.find((p) => p.id === myParticipantId) ?? null;
   }, [split, myParticipantId]);
+
+  const participantKey = split?.participants?.map((p) => p.id).join("|") ?? "";
+
+  useEffect(() => {
+    if (!split) return;
+    setSplitUi(loadPersistedSplitMode(split.id, split.participants.map((p) => p.id)));
+  }, [split?.id, participantKey]);
+
+  useEffect(() => {
+    if (!split) return;
+    savePersistedSplitMode(split.id, splitUi);
+  }, [split?.id, splitUi]);
+
+  const amountsById = useMemo(() => {
+    if (!split) return {} as Record<string, { shareCents: number; oweToPayerCents: number }>;
+    return computeAmountsByMode(split.totalCents, split.payerParticipantId, split.participants, splitUi);
+  }, [split, split?.totalCents, split?.payerParticipantId, participantKey, splitUi]);
+
+  const amt = useCallback(
+    (p: QuicksplitParticipantView) =>
+      amountsById[p.id] ?? { shareCents: p.shareCents, oweToPayerCents: p.oweToPayerCents },
+    [amountsById],
+  );
 
   const allActivities = useMemo(() => {
     if (!split) return [];
@@ -491,14 +524,28 @@ export function QuickSplitScreen() {
     );
   }
 
+  /** Suma k úhrade: výpočet z módu alebo aspoň hodnota zo servera (aby CTA nezmizlo pri chybe výpočtu). */
+  const payOweCents =
+    myParticipant && !myParticipant.isPayer
+      ? Math.max(amt(myParticipant).oweToPayerCents, myParticipant.oweToPayerCents)
+      : 0;
   const payMeText =
-    myParticipant && !myParticipant.isPayer && myParticipant.oweToPayerCents > 0
-      ? buildPayMeText(split, myParticipant.oweToPayerCents)
+    myParticipant && !myParticipant.isPayer && payOweCents > 0
+      ? buildPayMeText(split, payOweCents)
       : "";
   const payMeUrl =
-    myParticipant && !myParticipant.isPayer && myParticipant.oweToPayerCents > 0
-      ? buildPayMeUrl(split, myParticipant.oweToPayerCents)
+    myParticipant && !myParticipant.isPayer && payOweCents > 0
+      ? buildPayMeUrl(split, payOweCents)
       : "";
+
+  const openPayMeFlow = () => {
+    if (!payMeUrl) return;
+    payFlowFinalizedRef.current = false;
+    setPayFlowOpen(true);
+    setPayFlowDeadlineTs(Date.now() + 60_000);
+    setPayFlowSeconds(60);
+    window.open(payMeUrl, "_blank", "noopener,noreferrer");
+  };
 
   const session = readQsSession(split.id);
   const isAdminSession = !!session.adminToken;
@@ -538,10 +585,19 @@ export function QuickSplitScreen() {
             <h2 className="text-base font-semibold text-foreground">Rozdeliť medzi · suma</h2>
             <span className="text-lg font-bold text-primary">{formatEur(split.totalCents)}</span>
           </div>
-          <div className="rounded-2xl border border-foreground/25 divide-y divide-foreground/10">
+          <SplitModePanel
+            totalCents={split.totalCents}
+            payerParticipantId={split.payerParticipantId}
+            participants={split.participants}
+            myParticipantId={myParticipantId}
+            persisted={splitUi}
+            onChange={setSplitUi}
+          />
+          <div className="rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[#0e0e10] divide-y divide-foreground/10">
             {split.participants.map((p) => {
               const isMe = p.id === myParticipantId;
               const paid = !!p.markedPaidAt;
+              const a = amt(p);
               return (
                 <div key={p.id} className="flex flex-col gap-1 px-4 py-3">
                   <div className="flex items-center justify-between gap-2">
@@ -553,9 +609,12 @@ export function QuickSplitScreen() {
                       </span>
                       {p.isPayer && <span className="text-xs text-muted-foreground shrink-0">platil</span>}
                     </div>
-                    <span className="text-foreground text-sm font-medium shrink-0">{formatEur(p.shareCents)}</span>
+                    <span className="text-foreground text-sm font-medium shrink-0">{formatEur(a.shareCents)}</span>
                   </div>
-                  {!p.isPayer && p.oweToPayerCents > 0 && (
+                  {splitUi.mode === "equal" && (
+                    <p className="text-xs text-[#a3a3a3] pl-0.5">Podiel: {formatEur(a.shareCents)}</p>
+                  )}
+                  {!p.isPayer && a.oweToPayerCents > 0 && (
                     <div className="flex items-center justify-between pl-1">
                       <span
                         className={`text-xs font-medium ${paid ? "text-emerald-400" : "text-amber-400"}`}
@@ -564,10 +623,10 @@ export function QuickSplitScreen() {
                       </span>
                     </div>
                   )}
-                  {isMe && !p.isPayer && p.oweToPayerCents > 0 && !split.payerIban && (
+                  {isMe && !p.isPayer && a.oweToPayerCents > 0 && !split.payerIban && (
                     <p className="text-xs text-muted-foreground mt-1">Čaká na IBAN platiteľa</p>
                   )}
-                  {!p.isPayer && !isMe && p.oweToPayerCents > 0 && isAdminSession && (
+                  {!p.isPayer && !isMe && a.oweToPayerCents > 0 && isAdminSession && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -606,6 +665,23 @@ export function QuickSplitScreen() {
             )}
           </div>
         </section>
+
+        {myParticipant && !myParticipant.isPayer && payOweCents > 0 && split.payerIban && (
+          <section className="rounded-2xl border border-[rgba(255,255,255,0.12)] bg-[#0e0e10] p-4 space-y-3">
+            <p className="text-sm text-foreground">
+              K úhrade platiteľovi: <span className="font-bold text-primary tabular-nums">{formatEur(payOweCents)}</span>
+            </p>
+            <Button type="button" className="w-full min-h-[48px] bg-primary text-primary-foreground shadow-md" onClick={openPayMeFlow}>
+              Zaplatiť (PayMe odkaz)
+            </Button>
+          </section>
+        )}
+
+        {myParticipant && !myParticipant.isPayer && payOweCents > 0 && !split.payerIban && (
+          <p className="text-sm text-amber-400/90 px-1">
+            Platiteľ ešte nemá vyplnený IBAN — po doplnení sa tu zobrazí možnosť zaplatiť cez PayMe.
+          </p>
+        )}
 
         <section className="rounded-2xl border border-foreground/20 overflow-hidden">
           <button
@@ -762,25 +838,21 @@ export function QuickSplitScreen() {
           </Button>
         </div>
       </Modal>
-      {myParticipant && !myParticipant.isPayer && myParticipant.oweToPayerCents > 0 && split.payerIban && (
-        <div className="fixed bottom-20 left-0 right-0 max-w-screen-sm mx-auto px-4 pointer-events-none">
-          <div className="pointer-events-auto">
-            <Button
-              className="w-full h-12 bg-primary shadow-lg"
-              onClick={() => {
-                if (!payMeUrl) return;
-                payFlowFinalizedRef.current = false;
-                setPayFlowOpen(true);
-                setPayFlowDeadlineTs(Date.now() + 60_000);
-                setPayFlowSeconds(60);
-                window.open(payMeUrl, "_blank", "noopener,noreferrer");
-              }}
-            >
-              Pay me link · {formatEur(myParticipant.oweToPayerCents)}
-            </Button>
-          </div>
-        </div>
-      )}
+      {typeof document !== "undefined" &&
+        myParticipant &&
+        !myParticipant.isPayer &&
+        payOweCents > 0 &&
+        split.payerIban &&
+        createPortal(
+          <div className="fixed bottom-6 left-0 right-0 z-[10050] mx-auto max-w-screen-sm px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none">
+            <div className="pointer-events-auto">
+              <Button type="button" className="h-12 w-full bg-primary text-primary-foreground shadow-xl" onClick={openPayMeFlow}>
+                Pay me link · {formatEur(payOweCents)}
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

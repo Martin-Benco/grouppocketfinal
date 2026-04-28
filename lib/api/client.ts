@@ -15,7 +15,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || 'Request failed');
+      throw new Error(formatApiErrorMessage(error));
     }
 
     return response.json();
@@ -28,8 +28,11 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 }
 
 async function getAuthToken(): Promise<string> {
-  const { auth } = await import('@/lib/firebase/config');
+  const { auth, FIREBASE_SETUP_ERROR } = await import('@/lib/firebase/config');
   const { onAuthStateChanged } = await import('firebase/auth');
+  if (!auth) {
+    throw new Error(FIREBASE_SETUP_ERROR);
+  }
   
   return new Promise((resolve, reject) => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -46,6 +49,9 @@ async function getAuthToken(): Promise<string> {
 async function getOptionalAuthHeaders(): Promise<Record<string, string>> {
   try {
     const { auth } = await import('@/lib/firebase/config');
+    if (!auth) {
+      return {};
+    }
     const u = auth.currentUser;
     if (!u) return {};
     const token = await u.getIdToken();
@@ -60,6 +66,17 @@ export type QuickSplitRequestTokens = {
   adminToken?: string;
   participantSecret?: string;
 };
+
+function formatApiErrorMessage(error: { message?: unknown }): string {
+  const m = error?.message;
+  if (Array.isArray(m)) {
+    return m.map((x) => (typeof x === "string" ? x : String(x))).join(" ");
+  }
+  if (typeof m === "string" && m.trim()) {
+    return m.trim();
+  }
+  return "Request failed";
+}
 
 async function fetchQuicksplit(path: string, options: RequestInit & QuickSplitRequestTokens = {}) {
   const { joinToken, adminToken, participantSecret, ...rest } = options;
@@ -81,7 +98,8 @@ async function fetchQuicksplit(path: string, options: RequestInit & QuickSplitRe
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || 'Request failed');
+      const msg = formatApiErrorMessage(error);
+      throw new Error(msg);
     }
 
     return response.json();

@@ -2,13 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useNavigation } from "@/components/navigation/TopNav";
-
-const navItems = [
-  { id: "quicksplit", label: "QuickSplit" },
-  { id: "pockety", label: "Pockety" },
-  { id: "ucet", label: "Účet" },
-  { id: "premium", label: "Premium" },
-];
+import { MAIN_NAV_ITEMS } from "@/lib/nav-items";
 
 export function useSwipeNavigation(elementRef?: React.RefObject<HTMLElement>) {
   const { activeTab, setActiveTab } = useNavigation();
@@ -41,13 +35,13 @@ export function useSwipeNavigation(elementRef?: React.RefObject<HTMLElement>) {
     const isRightSwipe = distance < -minSwipeDistance;
 
     if (isLeftSwipe || isRightSwipe) {
-      const currentIndex = navItems.findIndex((item) => item.id === activeTab);
+      const currentIndex = MAIN_NAV_ITEMS.findIndex((item) => item.id === activeTab);
 
       if (currentIndex >= 0) {
-        if (isLeftSwipe && currentIndex < navItems.length - 1) {
-          setActiveTab(navItems[currentIndex + 1].id);
+        if (isLeftSwipe && currentIndex < MAIN_NAV_ITEMS.length - 1) {
+          setActiveTab(MAIN_NAV_ITEMS[currentIndex + 1].id);
         } else if (isRightSwipe && currentIndex > 0) {
-          setActiveTab(navItems[currentIndex - 1].id);
+          setActiveTab(MAIN_NAV_ITEMS[currentIndex - 1].id);
         }
       }
     }

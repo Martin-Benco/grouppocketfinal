@@ -16,13 +16,8 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { updateUserPassword, addUserPassword } from "@/lib/firebase/auth";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
-
-const navItems = [
-  { id: "quicksplit", label: "QuickSplit" },
-  { id: "pockety", label: "Pockety" },
-  { id: "ucet", label: "Účet" },
-  { id: "premium", label: "Premium" },
-];
+import { HomeScreen } from "@/components/home/HomeScreen";
+import { MAIN_NAV_ITEMS } from "@/lib/nav-items";
 
 function PocketsScreen() {
   return (
@@ -710,7 +705,7 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
   const contentRef = useRef<HTMLDivElement>(null);
   useSwipeNavigation(contentRef);
 
-  const activeIndex = navItems.findIndex((item) => item.id === activeTab);
+  const activeIndex = MAIN_NAV_ITEMS.findIndex((item) => item.id === activeTab);
 
   return (
     <>
@@ -723,10 +718,13 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
           }}
         >
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
-            <QuickSplitScreen />
+            <HomeScreen />
           </div>
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
             <PocketsScreen />
+          </div>
+          <div className="w-full flex-shrink-0 h-full overflow-y-auto">
+            <QuickSplitScreen />
           </div>
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
             <AccountScreen onNewUser={onNewUser} isPendingNewUser={isPendingNewUser} />

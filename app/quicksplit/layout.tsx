@@ -7,7 +7,7 @@ export default function QuickSplitLayout({
 }) {
   return (
     <div className="min-h-screen bg-background">
-      <TopNav initialTab="quicksplit" />
+      <TopNav initialTab="quicksplit" navigationMode="routes" />
       {children}
     </div>
   );

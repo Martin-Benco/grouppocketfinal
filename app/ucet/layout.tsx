@@ -7,7 +7,7 @@ export default function AccountLayout({
 }) {
   return (
     <div className="min-h-screen bg-background">
-      <TopNav initialTab="ucet" />
+      <TopNav initialTab="ucet" navigationMode="routes" />
       {children}
     </div>
   );

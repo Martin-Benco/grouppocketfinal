@@ -67,6 +67,15 @@ export type QuickSplitRequestTokens = {
   participantSecret?: string;
 };
 
+export type PocketTransactionInput = {
+  name: string;
+  amountCents: number;
+  tag?: string;
+  splitMethod?: string;
+  paidByUid?: string;
+  transactionDate?: string;
+};
+
 function formatApiErrorMessage(error: { message?: unknown }): string {
   const m = error?.message;
   if (Array.isArray(m)) {
@@ -196,6 +205,40 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ paid }),
         ...h,
+      }),
+  },
+  pockets: {
+    mine: async () => fetchWithAuth('/pockets/mine'),
+    create: async (body: {
+      name: string;
+      tags?: string[];
+      initialTransactions?: PocketTransactionInput[];
+      inviteEmails?: string[];
+    }) =>
+      fetchWithAuth('/pockets', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    get: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}`),
+    activities: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}/activities`),
+    update: async (pocketId: string, body: { name?: string; tags?: string[] }) =>
+      fetchWithAuth(`/pockets/${pocketId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    addTransaction: async (pocketId: string, body: PocketTransactionInput) =>
+      fetchWithAuth(`/pockets/${pocketId}/transactions`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    inviteByEmail: async (pocketId: string, email: string) =>
+      fetchWithAuth(`/pockets/${pocketId}/invite/email`, {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    leave: async (pocketId: string) =>
+      fetchWithAuth(`/pockets/${pocketId}/leave`, {
+        method: 'POST',
       }),
   },
 };

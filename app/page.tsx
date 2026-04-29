@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useNavigation } from "@/components/navigation/TopNav";
 import { TopNav } from "@/components/navigation/TopNav";
 import { useSwipeNavigation } from "@/hooks/useSwipe";
@@ -16,20 +17,8 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { updateUserPassword, addUserPassword } from "@/lib/firebase/auth";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
-import { HomeScreen } from "@/components/home/HomeScreen";
 import { MAIN_NAV_ITEMS } from "@/lib/nav-items";
-
-function PocketsScreen() {
-  return (
-    <div className="min-h-screen bg-background w-full">
-      <div className="max-w-screen-sm mx-auto px-4 py-6">
-        <h1 className="text-xl font-bold text-foreground">
-          Pockety
-        </h1>
-      </div>
-    </div>
-  );
-}
+import { PocketsScreen } from "@/components/pockets/PocketsScreen";
 
 function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean, email?: string) => void; isPendingNewUser?: boolean }) {
   const { user, loading, signOut } = useAuth();
@@ -688,18 +677,6 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   );
 }
 
-function PremiumPlanScreen() {
-  return (
-    <div className="min-h-screen bg-background w-full">
-      <div className="max-w-screen-sm mx-auto px-4 py-6">
-        <h1 className="text-xl font-bold text-foreground">
-          Premium
-        </h1>
-      </div>
-    </div>
-  );
-}
-
 function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean, email?: string) => void; isPendingNewUser?: boolean }) {
   const { activeTab } = useNavigation();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -718,19 +695,13 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
           }}
         >
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
-            <HomeScreen />
+            <QuickSplitScreen />
           </div>
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
             <PocketsScreen />
           </div>
           <div className="w-full flex-shrink-0 h-full overflow-y-auto">
-            <QuickSplitScreen />
-          </div>
-          <div className="w-full flex-shrink-0 h-full overflow-y-auto">
             <AccountScreen onNewUser={onNewUser} isPendingNewUser={isPendingNewUser} />
-          </div>
-          <div className="w-full flex-shrink-0 h-full overflow-y-auto">
-            <PremiumPlanScreen />
           </div>
         </div>
       </div>
@@ -739,8 +710,15 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
 }
 
 export default function Home() {
+  const searchParams = useSearchParams();
   const { user, loading } = useAuth();
   const { setActiveTab } = useNavigation();
+  const routeTab = searchParams.get("tab");
+  const routeTabInitial =
+    routeTab && MAIN_NAV_ITEMS.some((item) => item.id === routeTab)
+      ? (routeTab as (typeof MAIN_NAV_ITEMS)[number]["id"])
+      : undefined;
+
   const [showRegistrationFlow, setShowRegistrationFlow] = useState(false);
   const [registrationInitialName, setRegistrationInitialName] = useState("");
   const [pendingNewUser, setPendingNewUser] = useState(false);
@@ -862,12 +840,23 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen bg-background overflow-hidden flex flex-col">
-      <TopNav initialTab={shouldNavigateToAccount ? "ucet" : undefined}>
-        <div className="flex-1 overflow-y-auto">
-          <Content onNewUser={handleNewUser} isPendingNewUser={pendingNewUser || showRegistrationFlow} />
+    <>
+      <div className="h-screen bg-background overflow-hidden flex flex-col md:hidden">
+        <TopNav initialTab={shouldNavigateToAccount ? "ucet" : routeTabInitial}>
+          <div className="flex-1 overflow-y-auto">
+            <Content onNewUser={handleNewUser} isPendingNewUser={pendingNewUser || showRegistrationFlow} />
+          </div>
+        </TopNav>
+      </div>
+
+      <div className="hidden h-screen bg-background md:flex items-center justify-center px-6">
+        <div className="max-w-md rounded-2xl border border-foreground/15 bg-card p-8 text-center">
+          <h1 className="text-2xl font-bold text-foreground">Dostupné iba na mobile</h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            GroupPocket je momentálne optimalizovaný pre mobilné zariadenia. Otvorte aplikáciu na telefóne.
+          </p>
         </div>
-      </TopNav>
-    </div>
+      </div>
+    </>
   );
 }

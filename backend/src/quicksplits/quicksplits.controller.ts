@@ -3,13 +3,16 @@ import {
   Controller,
   Get,
   Headers,
+  MessageEvent,
   Param,
   Patch,
   Post,
   Query,
   Req,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
+import { Observable, from, interval, mergeMap, map } from 'rxjs';
 import { AuthGuard } from '../auth/auth.guard';
 import { OptionalAuthGuard } from '../auth/optional-auth.guard';
 import { QuicksplitsService } from './quicksplits.service';
@@ -18,6 +21,7 @@ import { UpdateQuicksplitDto } from './dto/update-quicksplit.dto';
 import { JoinQuicksplitDto } from './dto/join-quicksplit.dto';
 import { UpdateParticipantPaymentDto } from './dto/update-participant-payment.dto';
 import { MarkPaidDto } from './dto/mark-paid.dto';
+import { UpdateParticipantClaimDto } from './dto/update-participant-claim.dto';
 
 @Controller('quicksplits')
 export class QuicksplitsController {
@@ -37,6 +41,24 @@ export class QuicksplitsController {
   }
 
   /** Staršie upozornenia (pagination cez afterId = id poslednej zobrazenej aktivity) */
+  /** Server-Sent Events: periodicky posiela celý stav splitu (rovnaký tvar ako GET /:id). Tokeny cez query (EventSource neposiela vlastné hlavičky). */
+  @Sse(':id/stream')
+  @UseGuards(OptionalAuthGuard)
+  stream(
+    @Param('id') id: string,
+    @Query('joinToken') joinToken: string | undefined,
+    @Query('adminToken') adminToken: string | undefined,
+    @Req() req: { user?: { uid: string } },
+  ): Observable<MessageEvent> {
+    const firebaseUid = req.user?.uid ?? null;
+    return interval(2000).pipe(
+      mergeMap(() =>
+        from(this.quicksplits.getOne(id, { joinToken, adminToken, firebaseUid })),
+      ),
+      map((view) => ({ data: JSON.stringify(view) }) as MessageEvent),
+    );
+  }
+
   @Get(':id/activities')
   @UseGuards(OptionalAuthGuard)
   async listActivities(
@@ -84,6 +106,18 @@ export class QuicksplitsController {
     @Req() req: { user?: { uid: string } },
   ) {
     return this.quicksplits.join(id, dto, joinToken, req.user?.uid ?? null);
+  }
+
+  @Patch(':id/participants/:participantId/claim')
+  @UseGuards(OptionalAuthGuard)
+  async updateClaim(
+    @Param('id') id: string,
+    @Param('participantId') participantId: string,
+    @Body() dto: UpdateParticipantClaimDto,
+    @Headers('x-join-token') joinToken: string | undefined,
+    @Headers('x-participant-secret') participantSecret: string | undefined,
+  ) {
+    return this.quicksplits.updateParticipantClaim(id, participantId, dto, joinToken, participantSecret);
   }
 
   @Patch(':id/participants/:participantId/payment')

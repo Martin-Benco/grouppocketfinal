@@ -7,6 +7,13 @@ export class CreateQuicksplitDto {
   @Max(100_000_000)
   totalCents!: number;
 
+  /** Očakávaný počet ľudí vrátane admina (2–10). Určuje text „čaká sa na N…“ a limit joinov. */
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(10)
+  targetParticipantCount?: number;
+
   @IsOptional()
   @IsString()
   @MinLength(1)

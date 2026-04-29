@@ -711,7 +711,7 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
 
 export default function Home() {
   const searchParams = useSearchParams();
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const { setActiveTab } = useNavigation();
   const routeTab = searchParams.get("tab");
   const routeTabInitial =
@@ -816,14 +816,6 @@ export default function Home() {
       }
     }
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
-      </div>
-    );
-  }
 
   if (showRegistrationFlow) {
     return (

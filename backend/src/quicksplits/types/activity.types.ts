@@ -5,7 +5,13 @@ export type ActivityType =
   | 'payer_changed'
   | 'payment_details_updated'
   | 'marked_paid'
-  | 'marked_unpaid';
+  | 'marked_unpaid'
+  | 'flow_step_changed'
+  | 'split_mode_changed'
+  | 'split_items_updated'
+  | 'participant_claim_updated'
+  | 'remainder_distributed'
+  | 'splitting_finalized';
 
 export type ActivityView = {
   id: string;

@@ -1,4 +1,12 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+/** URL pre EventSource (SSE) — tokeny v query, lebo EventSource nepodporuje vlastné hlavičky. */
+export function quicksplitStreamUrl(splitId: string, tokens: { joinToken?: string; adminToken?: string }) {
+  const p = new URLSearchParams();
+  if (tokens.adminToken) p.set('adminToken', tokens.adminToken);
+  else if (tokens.joinToken) p.set('joinToken', tokens.joinToken);
+  return `${API_BASE_URL}/quicksplits/${splitId}/stream?${p.toString()}`;
+}
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
   try {
@@ -146,14 +154,51 @@ export const api = {
   },
 
   quicksplits: {
-    create: (body: { totalCents: number; creatorDisplayName?: string }) =>
-      fetchQuicksplit('/quicksplits', { method: 'POST', body: JSON.stringify(body) }),
+    create: (body: {
+      totalCents: number;
+      targetParticipantCount?: number;
+      creatorDisplayName?: string;
+    }) => fetchQuicksplit('/quicksplits', { method: 'POST', body: JSON.stringify(body) }),
 
     get: (splitId: string, h: QuickSplitRequestTokens) =>
       fetchQuicksplit(`/quicksplits/${splitId}`, { method: 'GET', ...h }),
 
-    update: (splitId: string, body: { totalCents?: number; payerParticipantId?: string }, h: QuickSplitRequestTokens) =>
+    update: (
+      splitId: string,
+      body: {
+        totalCents?: number;
+        targetParticipantCount?: number;
+        payerParticipantId?: string;
+        flowStep?: 'waiting' | 'splitting' | 'settlement' | 'closed';
+        splitMode?: 'equal' | 'custom_amounts' | 'items';
+        equalExcludedParticipantIds?: string[];
+        splitItems?: Array<{
+          id?: string;
+          name: string;
+          amountCents: number;
+          consumerParticipantIds: string[];
+        }>;
+        distributeRemainderEqually?: boolean;
+        remainderAssignments?: Array<{
+          participantId: string;
+          adjustmentCents: number;
+        }>;
+      },
+      h: QuickSplitRequestTokens,
+    ) =>
       fetchQuicksplit(`/quicksplits/${splitId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        ...h,
+      }),
+
+    updateParticipantClaim: (
+      splitId: string,
+      participantId: string,
+      body: { claimedAmountCents: number },
+      h: QuickSplitRequestTokens,
+    ) =>
+      fetchQuicksplit(`/quicksplits/${splitId}/participants/${participantId}/claim`, {
         method: 'PATCH',
         body: JSON.stringify(body),
         ...h,

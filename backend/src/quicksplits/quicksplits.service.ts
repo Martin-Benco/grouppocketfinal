@@ -5,14 +5,22 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import type { DocumentData, DocumentReference, Query } from 'firebase-admin/firestore';
 import { FirebaseService } from '../firebase/firebase.service';
 import { CreateQuicksplitDto } from './dto/create-quicksplit.dto';
 import { UpdateQuicksplitDto } from './dto/update-quicksplit.dto';
 import { JoinQuicksplitDto } from './dto/join-quicksplit.dto';
 import { UpdateParticipantPaymentDto } from './dto/update-participant-payment.dto';
-import type { DocumentData, Query } from 'firebase-admin/firestore';
+import { UpdateParticipantClaimDto } from './dto/update-participant-claim.dto';
 import { hashToken, randomToken, timingSafeEqual } from './utils/tokens';
 import type { ActivityType, ActivityView } from './types/activity.types';
+
+export type QuickSplitItemView = {
+  id: string;
+  name: string;
+  amountCents: number;
+  consumerParticipantIds: string[];
+};
 
 export type QuicksplitParticipantView = {
   id: string;
@@ -23,6 +31,8 @@ export type QuicksplitParticipantView = {
   isPayer: boolean;
   oweToPayerCents: number;
   markedPaidAt: string | null;
+  claimedAmountCents: number | null;
+  adjustmentCents: number;
 };
 
 export type QuicksplitView = {
@@ -39,6 +49,26 @@ export type QuicksplitView = {
   activities: ActivityView[];
   activitiesHasMore: boolean;
   activitiesLoadMoreAfterId: string | null;
+  flowStep: 'waiting' | 'splitting' | 'settlement' | 'closed';
+  targetParticipantCount: number;
+  splitMode: 'equal' | 'custom_amounts' | 'items' | null;
+  equalExcludedParticipantIds: string[];
+  splitItems: QuickSplitItemView[];
+  customClaimsSumCents: number;
+  customRemainderCents: number;
+  canJoinMore: boolean;
+};
+
+type LoadedParticipant = {
+  id: string;
+  displayName: string;
+  userUid: string | null;
+  iban: string | null;
+  secretTokenHash: string;
+  createdAt: string;
+  markedPaidAt?: string | null;
+  claimedAmountCents?: number | null;
+  adjustmentCents?: number;
 };
 
 @Injectable()
@@ -62,6 +92,101 @@ export class QuicksplitsService {
     const base = Math.floor(totalCents / n);
     const rem = totalCents % n;
     return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0));
+  }
+
+  private normalizeFlowStep(data: DocumentData): 'waiting' | 'splitting' | 'settlement' | 'closed' {
+    const s = data.flowStep as string | undefined;
+    if (s === 'waiting' || s === 'splitting' || s === 'settlement' || s === 'closed') return s;
+    return 'settlement';
+  }
+
+  private isLegacySplit(data: DocumentData): boolean {
+    return data.flowStep === undefined || data.flowStep === null;
+  }
+
+  private normalizeSplitMode(
+    data: DocumentData,
+    flowStep: 'waiting' | 'splitting' | 'settlement' | 'closed',
+  ): 'equal' | 'custom_amounts' | 'items' | null {
+    if (flowStep === 'waiting') return null;
+    const m = data.splitMode as string | undefined;
+    if (m === 'equal' || m === 'custom_amounts' || m === 'items') return m;
+    if (flowStep === 'settlement' && this.isLegacySplit(data)) return 'equal';
+    return null;
+  }
+
+  private participantOrderIds(participants: LoadedParticipant[]): string[] {
+    return [...participants].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')).map((p) => p.id);
+  }
+
+  /**
+   * Rozdelí sumu položky medzi konzumentov; poradie pri zvyšných centoch podľa poradia v split zozname.
+   */
+  private allocateItemAmongConsumers(
+    amountCents: number,
+    consumerIds: string[],
+    participantOrder: string[],
+  ): Map<string, number> {
+    const out = new Map<string, number>();
+    if (consumerIds.length === 0) return out;
+    const unique = [...new Set(consumerIds)];
+    const sorted = [...unique].sort(
+      (a, b) => participantOrder.indexOf(a) - participantOrder.indexOf(b),
+    );
+    const n = sorted.length;
+    const shares = this.splitEqualShares(amountCents, n);
+    sorted.forEach((id, i) => {
+      out.set(id, (out.get(id) ?? 0) + (shares[i] ?? 0));
+    });
+    return out;
+  }
+
+  private computeShares(
+    totalCents: number,
+    participants: LoadedParticipant[],
+    data: DocumentData,
+  ): Map<string, number> {
+    const flowStep = this.normalizeFlowStep(data);
+    const mode = this.normalizeSplitMode(data, flowStep);
+    const order = this.participantOrderIds(participants);
+    const shareMap = new Map<string, number>();
+    for (const p of participants) shareMap.set(p.id, 0);
+
+    if (flowStep === 'waiting') return shareMap;
+    if ((flowStep === 'splitting' || flowStep === 'settlement') && mode === null) return shareMap;
+
+    if (mode === 'equal') {
+      const excluded = new Set((data.equalExcludedParticipantIds as string[]) || []);
+      const included = order.filter((id) => !excluded.has(id));
+      if (included.length === 0) return shareMap;
+      const shares = this.splitEqualShares(totalCents, included.length);
+      included.forEach((id, i) => shareMap.set(id, shares[i] ?? 0));
+      return shareMap;
+    }
+
+    if (mode === 'custom_amounts') {
+      for (const p of participants) {
+        const c = p.claimedAmountCents ?? 0;
+        const a = p.adjustmentCents ?? 0;
+        shareMap.set(p.id, c + a);
+      }
+      return shareMap;
+    }
+
+    if (mode === 'items') {
+      const rawItems = (data.splitItems as Array<Record<string, unknown>>) || [];
+      for (const row of rawItems) {
+        const amt = row.amountCents as number;
+        const cons = (row.consumerParticipantIds as string[]) || [];
+        const alloc = this.allocateItemAmongConsumers(amt, cons, order);
+        for (const [pid, v] of alloc) {
+          shareMap.set(pid, (shareMap.get(pid) ?? 0) + v);
+        }
+      }
+      return shareMap;
+    }
+
+    return shareMap;
   }
 
   private async addActivity(
@@ -141,17 +266,9 @@ export class QuicksplitsService {
     return { activities, hasMore, nextAfterId };
   }
 
-  private async loadParticipants(splitId: string) {
+  private async loadParticipants(splitId: string): Promise<LoadedParticipant[]> {
     const snap = await this.participantsRef(splitId).get();
-    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Array<{
-      id: string;
-      displayName: string;
-      userUid: string | null;
-      iban: string | null;
-      secretTokenHash: string;
-      createdAt: string;
-      markedPaidAt?: string | null;
-    }>;
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as LoadedParticipant[];
     list.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     return list;
   }
@@ -159,19 +276,49 @@ export class QuicksplitsService {
   private async getUserIban(userUid: string): Promise<string | null> {
     const doc = await this.firebase.getFirestore().collection('users').doc(userUid).get();
     if (!doc.exists) return null;
-    const data = doc.data();
-    return (data?.iban as string) || null;
+    const d = doc.data();
+    return (d?.iban as string) || null;
+  }
+
+  private normalizeSplitItemsFromDoc(data: DocumentData): QuickSplitItemView[] {
+    const raw = (data.splitItems as Array<Record<string, unknown>>) || [];
+    return raw.map((row) => ({
+      id: (row.id as string) || randomUUID(),
+      name: String(row.name || ''),
+      amountCents: Number(row.amountCents) || 0,
+      consumerParticipantIds: Array.isArray(row.consumerParticipantIds)
+        ? (row.consumerParticipantIds as string[])
+        : [],
+    }));
+  }
+
+  private customClaimsSum(participants: LoadedParticipant[]): number {
+    return participants.reduce((s, p) => s + (p.claimedAmountCents ?? 0), 0);
+  }
+
+  private customAdjustmentsSum(participants: LoadedParticipant[]): number {
+    return participants.reduce((s, p) => s + (p.adjustmentCents ?? 0), 0);
   }
 
   private async buildView(
     splitId: string,
     data: DocumentData,
-    participants: Awaited<ReturnType<typeof this.loadParticipants>>,
+    participants: LoadedParticipant[],
     activitiesBlock: Awaited<ReturnType<typeof this.loadActivitiesFirstPage>>,
   ): Promise<QuicksplitView> {
     const payerId = data.payerParticipantId as string;
-    const n = participants.length;
-    const shares = this.splitEqualShares(data.totalCents as number, n);
+    const totalCents = data.totalCents as number;
+    const flowStep = this.normalizeFlowStep(data);
+    const targetParticipantCount = Math.min(
+      10,
+      Math.max(2, (data.targetParticipantCount as number) || participants.length || 2),
+    );
+    const splitMode = this.normalizeSplitMode(data, flowStep);
+    const equalExcludedParticipantIds = Array.isArray(data.equalExcludedParticipantIds)
+      ? [...(data.equalExcludedParticipantIds as string[])]
+      : [];
+    const splitItems = this.normalizeSplitItemsFromDoc(data);
+    const shareById = this.computeShares(totalCents, participants, data);
 
     const payer = participants.find((p) => p.id === payerId);
     let payerIban: string | null = payer?.iban || null;
@@ -180,8 +327,12 @@ export class QuicksplitsService {
       if (profileIban) payerIban = profileIban;
     }
 
-    const views: QuicksplitParticipantView[] = participants.map((p, i) => {
-      const share = shares[i] ?? 0;
+    const claimsSum = this.customClaimsSum(participants);
+    const adjustmentsSum = this.customAdjustmentsSum(participants);
+    const customRemainderCents = totalCents - claimsSum - adjustmentsSum;
+
+    const views: QuicksplitParticipantView[] = participants.map((p) => {
+      const share = shareById.get(p.id) ?? 0;
       const isPayer = p.id === payerId;
       const oweToPayerCents = isPayer ? 0 : Math.max(0, share);
       return {
@@ -193,23 +344,36 @@ export class QuicksplitsService {
         isPayer,
         oweToPayerCents,
         markedPaidAt: p.markedPaidAt ?? null,
+        claimedAmountCents: p.claimedAmountCents ?? null,
+        adjustmentCents: p.adjustmentCents ?? 0,
       };
     });
 
+    const canJoinMore =
+      flowStep === 'waiting' && participants.length < targetParticipantCount;
+
     return {
       id: splitId,
-      totalCents: data.totalCents,
+      totalCents,
       currency: (data.currency as string) || 'EUR',
       ownerUid: data.ownerUid ?? null,
       payerParticipantId: payerId,
       participants: views,
       payerIban,
       payerDisplayName: payer?.displayName || 'Platiteľ',
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
+      createdAt: data.createdAt as string,
+      updatedAt: data.updatedAt as string,
       activities: activitiesBlock.items,
       activitiesHasMore: activitiesBlock.hasMore,
       activitiesLoadMoreAfterId: activitiesBlock.loadMoreAfterId,
+      flowStep,
+      targetParticipantCount,
+      splitMode,
+      equalExcludedParticipantIds,
+      splitItems,
+      customClaimsSumCents: claimsSum,
+      customRemainderCents,
+      canJoinMore,
     };
   }
 
@@ -228,6 +392,8 @@ export class QuicksplitsService {
       dto.creatorDisplayName?.trim() ||
       (ownerUid ? 'Ja' : 'Host');
 
+    const targetParticipantCount = dto.targetParticipantCount ?? 2;
+
     batch.set(splitRef, {
       totalCents: dto.totalCents,
       currency: 'EUR',
@@ -237,6 +403,11 @@ export class QuicksplitsService {
       adminTokenHash: hashToken(adminToken),
       createdAt: now,
       updatedAt: now,
+      flowStep: 'waiting',
+      targetParticipantCount,
+      splitMode: null,
+      equalExcludedParticipantIds: [],
+      splitItems: [],
     });
 
     batch.set(this.participantsRef(id).doc(creatorId), {
@@ -246,6 +417,8 @@ export class QuicksplitsService {
       secretTokenHash: hashToken(creatorSecret),
       createdAt: now,
       markedPaidAt: null,
+      claimedAmountCents: null,
+      adjustmentCents: 0,
     });
 
     await batch.commit();
@@ -254,7 +427,7 @@ export class QuicksplitsService {
       type: 'split_created',
       actorParticipantId: creatorId,
       actorDisplayName: creatorName,
-      meta: { totalCents: dto.totalCents },
+      meta: { totalCents: dto.totalCents, targetParticipantCount },
     });
 
     return {
@@ -334,6 +507,147 @@ export class QuicksplitsService {
     return this.buildView(splitId, data, participants, activitiesBlock);
   }
 
+  private validateParticipantIds(participants: LoadedParticipant[], ids: string[]) {
+    const set = new Set(participants.map((p) => p.id));
+    for (const id of ids) {
+      if (!set.has(id)) throw new BadRequestException(`Neplatný účastník: ${id}`);
+    }
+  }
+
+  private async assertFinalizationOk(
+    splitId: string,
+    data: DocumentData,
+    participants: LoadedParticipant[],
+  ) {
+    const totalCents = data.totalCents as number;
+    const mode = data.splitMode as string;
+    if (mode === 'custom_amounts') {
+      let sum = 0;
+      for (const p of participants) {
+        sum += (p.claimedAmountCents ?? 0) + (p.adjustmentCents ?? 0);
+      }
+      if (sum !== totalCents) {
+        throw new BadRequestException(
+          `Súčet zadaných súm (${sum}) musí sedieť s celkom (${totalCents}) pred dokončením.`,
+        );
+      }
+    }
+    if (mode === 'items') {
+      const items = this.normalizeSplitItemsFromDoc(data);
+      let s = 0;
+      for (const it of items) {
+        if (!it.name.trim()) throw new BadRequestException('Položka musí mať názov');
+        if (it.consumerParticipantIds.length === 0) {
+          throw new BadRequestException(`Položka „${it.name}“: označ aspoň jedného konzumenta`);
+        }
+        this.validateParticipantIds(participants, it.consumerParticipantIds);
+        s += it.amountCents;
+      }
+      if (s !== totalCents) {
+        throw new BadRequestException(
+          `Súčet položiek (${s}) musí byť rovný celkovej sume účtu (${totalCents}).`,
+        );
+      }
+    }
+    if (mode === 'equal') {
+      const excluded = new Set((data.equalExcludedParticipantIds as string[]) || []);
+      this.validateParticipantIds(participants, [...excluded]);
+      if (participants.length < 3 && excluded.size > 0) {
+        throw new BadRequestException('Účastníkov je málo — vylúčenie je možné až od 3 ľudí.');
+      }
+      const order = this.participantOrderIds(participants);
+      const included = order.filter((id) => !excluded.has(id));
+      if (included.length === 0) {
+        throw new BadRequestException('Aspôň jeden účastník musí byť zahrnutý do delenia.');
+      }
+    }
+  }
+
+  private normalizeIncomingItems(
+    items: NonNullable<UpdateQuicksplitDto['splitItems']>,
+    participants: LoadedParticipant[],
+  ): QuickSplitItemView[] {
+    const out: QuickSplitItemView[] = [];
+    for (const row of items) {
+      const id = row.id?.trim() || randomUUID();
+      const name = row.name?.trim() || '';
+      if (!name) continue;
+      this.validateParticipantIds(participants, row.consumerParticipantIds || []);
+      out.push({
+        id,
+        name,
+        amountCents: row.amountCents,
+        consumerParticipantIds: [...(row.consumerParticipantIds || [])],
+      });
+    }
+    return out;
+  }
+
+  private async distributeRemainderEqually(splitId: string, ref: DocumentReference, data: DocumentData) {
+    const totalCents = data.totalCents as number;
+    const participants = await this.loadParticipants(splitId);
+    const n = participants.length;
+    if (n === 0) return;
+    const sumClaimed = this.customClaimsSum(participants);
+    const R = totalCents - sumClaimed;
+    if (R < 0) {
+      throw new BadRequestException('Súčet zadaných súm presahuje celkovú sumu účtu.');
+    }
+    const shares = R === 0 ? Array(n).fill(0) : this.splitEqualShares(R, n);
+    const batch = this.firebase.getFirestore().batch();
+    participants.forEach((p, i) => {
+      batch.update(this.participantsRef(splitId).doc(p.id), { adjustmentCents: shares[i] ?? 0 });
+    });
+    await batch.commit();
+    await ref.update({ updatedAt: new Date().toISOString() });
+    await this.addActivity(splitId, {
+      type: 'remainder_distributed',
+      meta: { remainderCents: R },
+    });
+  }
+
+  private async assignRemainderManually(
+    splitId: string,
+    ref: DocumentReference,
+    data: DocumentData,
+    assignments: NonNullable<UpdateQuicksplitDto['remainderAssignments']>,
+  ) {
+    const mode = data.splitMode as string;
+    if (mode !== 'custom_amounts') {
+      throw new BadRequestException('Manuálne priradenie zostatku platí len pre režim „Každý svoju sumu“.');
+    }
+    const participants = await this.loadParticipants(splitId);
+    this.validateParticipantIds(
+      participants,
+      assignments.map((a) => a.participantId),
+    );
+    const byId = new Map<string, number>();
+    for (const row of assignments) {
+      byId.set(row.participantId, (byId.get(row.participantId) ?? 0) + row.adjustmentCents);
+    }
+    const totalCents = data.totalCents as number;
+    const claims = this.customClaimsSum(participants);
+    const targetRemainder = totalCents - claims;
+    const assignedSum = [...byId.values()].reduce((s, x) => s + x, 0);
+    if (assignedSum !== targetRemainder) {
+      throw new BadRequestException(
+        `Manuálne priradenie musí pokryť presný zostatok (${targetRemainder}).`,
+      );
+    }
+    const batch = this.firebase.getFirestore().batch();
+    for (const p of participants) {
+      batch.update(this.participantsRef(splitId).doc(p.id), {
+        adjustmentCents: byId.get(p.id) ?? 0,
+      });
+    }
+    await batch.commit();
+    await ref.update({ updatedAt: new Date().toISOString() });
+    await this.addActivity(splitId, {
+      type: 'remainder_distributed',
+      meta: { remainderCents: targetRemainder, manual: true },
+    });
+  }
+
   async updateSplit(
     splitId: string,
     dto: UpdateQuicksplitDto,
@@ -343,25 +657,108 @@ export class QuicksplitsService {
     const { ref, data } = await this.getSplitDoc(splitId);
     await this.assertCanAdmin(data, adminToken, firebaseUid ?? null);
 
+    const flowStepBefore = this.normalizeFlowStep(data);
+    const now = new Date().toISOString();
+    const updates: Record<string, unknown> = { updatedAt: now };
+
     const partsBefore = await this.loadParticipants(splitId);
     const oldPayerId = data.payerParticipantId as string;
     const oldPayerName = partsBefore.find((p) => p.id === oldPayerId)?.displayName || '';
 
-    const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (dto.totalCents !== undefined && dto.totalCents !== data.totalCents) {
       updates.totalCents = dto.totalCents;
     }
-
+    if (dto.targetParticipantCount !== undefined) {
+      const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
+      if (fs !== 'waiting') {
+        throw new BadRequestException('Počet ľudí sa dá meniť len počas čakania na členov.');
+      }
+      if (dto.targetParticipantCount < partsBefore.length) {
+        throw new BadRequestException('Počet ľudí nemôže byť menší než aktuálne pripojení členovia.');
+      }
+      updates.targetParticipantCount = dto.targetParticipantCount;
+    }
     if (dto.payerParticipantId !== undefined) {
-      const parts = await this.loadParticipants(splitId);
-      if (!parts.some((p) => p.id === dto.payerParticipantId)) {
+      if (!partsBefore.some((p) => p.id === dto.payerParticipantId)) {
         throw new BadRequestException('Neplatný platiteľ');
       }
       updates.payerParticipantId = dto.payerParticipantId;
     }
 
+    if (dto.splitMode !== undefined) {
+      const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
+      if (fs !== 'splitting') {
+        throw new BadRequestException('Režim delenia sa dá meniť len v kroku delenia.');
+      }
+      updates.splitMode = dto.splitMode;
+    }
+
+    if (dto.equalExcludedParticipantIds !== undefined) {
+      const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
+      if (fs !== 'splitting') {
+        throw new BadRequestException('Vylúčenia sa dajú meniť len v kroku delenia.');
+      }
+      if (partsBefore.length < 3 && dto.equalExcludedParticipantIds.length > 0) {
+        throw new BadRequestException('Účastníkov je málo — vylúčenie je možné až od 3 ľudí.');
+      }
+      updates.equalExcludedParticipantIds = dto.equalExcludedParticipantIds;
+    }
+
+    if (dto.splitItems !== undefined) {
+      const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
+      if (fs !== 'splitting') {
+        throw new BadRequestException('Položky sa dajú meniť len v kroku delenia.');
+      }
+      updates.splitItems = this.normalizeIncomingItems(dto.splitItems, partsBefore);
+    }
+
+    if (dto.flowStep !== undefined) {
+      if (dto.flowStep === 'splitting' && flowStepBefore === 'waiting') {
+        updates.flowStep = 'splitting';
+      } else if (dto.flowStep === 'settlement' && flowStepBefore === 'splitting') {
+        const mergedData = { ...data, ...updates } as DocumentData;
+        const mode = (mergedData.splitMode as string) || null;
+        if (!mode) throw new BadRequestException('Pred dokončením vyber spôsob delenia.');
+        const participants = await this.loadParticipants(splitId);
+        await this.assertFinalizationOk(splitId, mergedData, participants);
+        updates.flowStep = 'settlement';
+      } else if (dto.flowStep === 'closed') {
+        updates.flowStep = 'closed';
+      } else {
+        throw new BadRequestException('Neplatná zmena kroku flowu');
+      }
+    }
+
     await ref.update(updates);
-    const fresh = await ref.get();
+
+    if (dto.splitItems !== undefined) {
+      await this.addActivity(splitId, {
+        type: 'split_items_updated',
+        meta: { count: dto.splitItems!.length },
+      });
+    }
+    let fresh = (await ref.get()).data()!;
+
+    if (dto.distributeRemainderEqually) {
+      const fs = this.normalizeFlowStep(fresh);
+      if (fs !== 'splitting' && fs !== 'settlement') {
+        throw new BadRequestException('Zostatok nie je možné rozdeliť v tomto kroku.');
+      }
+      if ((fresh.splitMode as string) !== 'custom_amounts') {
+        throw new BadRequestException('Rovnomerné rozdelenie zostatku platí len pre režim „Každý svoju sumu“.');
+      }
+      await this.distributeRemainderEqually(splitId, ref, fresh);
+      fresh = (await ref.get()).data()!;
+    }
+    if (dto.remainderAssignments !== undefined) {
+      const fs = this.normalizeFlowStep(fresh);
+      if (fs !== 'splitting' && fs !== 'settlement') {
+        throw new BadRequestException('Manuálne priradenie zostatku nie je možné v tomto kroku.');
+      }
+      await this.assignRemainderManually(splitId, ref, fresh, dto.remainderAssignments);
+      fresh = (await ref.get()).data()!;
+    }
+
     const participants = await this.loadParticipants(splitId);
 
     if (dto.totalCents !== undefined && dto.totalCents !== data.totalCents) {
@@ -371,15 +768,31 @@ export class QuicksplitsService {
       });
     }
     if (dto.payerParticipantId !== undefined && dto.payerParticipantId !== oldPayerId) {
-      const newName = participants.find((p) => p.id === dto.payerParticipantId)?.displayName || '';
+      const newName =
+        participants.find((p) => p.id === dto.payerParticipantId)?.displayName || '';
       await this.addActivity(splitId, {
         type: 'payer_changed',
         meta: { previousPayerName: oldPayerName, newPayerName: newName },
       });
     }
+    if (dto.flowStep !== undefined && dto.flowStep !== flowStepBefore) {
+      await this.addActivity(splitId, {
+        type: 'flow_step_changed',
+        meta: { from: flowStepBefore, to: dto.flowStep },
+      });
+    }
+    if (dto.splitMode !== undefined) {
+      await this.addActivity(splitId, {
+        type: 'split_mode_changed',
+        meta: { mode: dto.splitMode },
+      });
+    }
+    if (dto.flowStep === 'settlement' && flowStepBefore === 'splitting') {
+      await this.addActivity(splitId, { type: 'splitting_finalized', meta: {} });
+    }
 
     const activitiesBlock = await this.loadActivitiesFirstPage(splitId);
-    return this.buildView(splitId, fresh.data()!, participants, activitiesBlock);
+    return this.buildView(splitId, fresh, participants, activitiesBlock);
   }
 
   async join(
@@ -393,6 +806,23 @@ export class QuicksplitsService {
       throw new ForbiddenException('Neplatný invite token');
     }
 
+    const flowStep = this.normalizeFlowStep(data);
+    const legacy = this.isLegacySplit(data);
+    if (!legacy && flowStep !== 'waiting') {
+      throw new BadRequestException('Do tohto splitu sa už nedá pripojiť.');
+    }
+
+    const existing = await this.loadParticipants(splitId);
+    if (!legacy) {
+      const cap = Math.min(
+        10,
+        Math.max(2, (data.targetParticipantCount as number) || existing.length + 1),
+      );
+      if (existing.length >= cap) {
+        throw new BadRequestException('Kapacita splitu je naplnená.');
+      }
+    }
+
     const pid = randomUUID();
     const secret = randomToken(16);
     const now = new Date().toISOString();
@@ -404,6 +834,8 @@ export class QuicksplitsService {
       secretTokenHash: hashToken(secret),
       createdAt: now,
       markedPaidAt: null,
+      claimedAmountCents: null,
+      adjustmentCents: 0,
     });
 
     await ref.update({ updatedAt: now });
@@ -416,6 +848,58 @@ export class QuicksplitsService {
     });
 
     return { participantId: pid, participantSecret: secret };
+  }
+
+  async updateParticipantClaim(
+    splitId: string,
+    participantId: string,
+    dto: UpdateParticipantClaimDto,
+    joinToken: string | undefined,
+    participantSecret: string | undefined,
+  ) {
+    const { data, ref } = await this.getSplitDoc(splitId);
+    if (!this.verifyJoin(data, joinToken)) {
+      throw new ForbiddenException('Neplatný invite token');
+    }
+    await this.assertParticipantSecret(splitId, participantId, participantSecret);
+
+    const flowStep = this.normalizeFlowStep(data);
+    if (flowStep !== 'splitting' || data.splitMode !== 'custom_amounts') {
+      throw new BadRequestException('Úprava sumy je možná len v režime „Každý svoju sumu“ počas delenia.');
+    }
+
+    const now = new Date().toISOString();
+    const pRef = this.participantsRef(splitId).doc(participantId);
+    const pSnap = await pRef.get();
+    if (!pSnap.exists) throw new NotFoundException('Účastník nenájdený');
+    const p = pSnap.data()!;
+
+    await pRef.update({
+      claimedAmountCents: dto.claimedAmountCents,
+      adjustmentCents: 0,
+    });
+
+    const batch = this.firebase.getFirestore().batch();
+    const all = await this.loadParticipants(splitId);
+    for (const row of all) {
+      if (row.id !== participantId) {
+        batch.update(this.participantsRef(splitId).doc(row.id), { adjustmentCents: 0 });
+      }
+    }
+    await batch.commit();
+
+    await ref.update({ updatedAt: now });
+    await this.addActivity(splitId, {
+      type: 'participant_claim_updated',
+      actorParticipantId: participantId,
+      actorDisplayName: (p.displayName as string) || null,
+      meta: { claimedAmountCents: dto.claimedAmountCents },
+    });
+
+    const participants = await this.loadParticipants(splitId);
+    const activitiesBlock = await this.loadActivitiesFirstPage(splitId);
+    const fresh = (await ref.get()).data()!;
+    return this.buildView(splitId, fresh, participants, activitiesBlock);
   }
 
   async updateParticipantPayment(
@@ -497,6 +981,11 @@ export class QuicksplitsService {
     participantSecret: string | undefined,
   ) {
     const { data, ref } = await this.getSplitDoc(splitId);
+    const flowStep = this.normalizeFlowStep(data);
+    if (flowStep !== 'settlement') {
+      throw new BadRequestException('Potvrdenie platby je možné až po dokončení delenia.');
+    }
+
     const payerId = data.payerParticipantId as string;
     if (participantId === payerId) {
       throw new BadRequestException('Platiteľ nemá stav „zaplatil“ voči sám sebe');
@@ -529,8 +1018,8 @@ export class QuicksplitsService {
 
     const participants = await this.loadParticipants(splitId);
     const activitiesBlock = await this.loadActivitiesFirstPage(splitId);
-    const fresh = await ref.get();
-    return this.buildView(splitId, fresh.data()!, participants, activitiesBlock);
+    const fresh = (await ref.get()).data()!;
+    return this.buildView(splitId, fresh, participants, activitiesBlock);
   }
 
   async listMine(uid: string) {

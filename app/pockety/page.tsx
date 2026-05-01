@@ -1,5 +1,5 @@
-import { PocketsScreen } from "@/components/pockets/PocketsScreen";
+import { PocketsHome } from "@/components/pockets/PocketsHome";
 
 export default function PocketyPage() {
-  return <PocketsScreen />;
+  return <PocketsHome />;
 }

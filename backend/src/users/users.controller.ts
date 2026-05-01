@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Put, Post, Body, Param, UseGuards, Request, Query } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -7,6 +7,11 @@ import { AuthGuard } from '../auth/auth.guard';
 @UseGuards(AuthGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('search/by-email')
+  async searchUsersByEmail(@Query('q') query: string, @Request() req) {
+    return this.usersService.searchUsersByEmail(query, req.user.uid);
+  }
 
   @Get(':id')
   async getUser(@Param('id') id: string, @Request() req) {

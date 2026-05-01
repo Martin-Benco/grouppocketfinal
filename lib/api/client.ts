@@ -1,5 +1,40 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+const responseCache = new Map<string, { expiresAt: number; data: unknown }>();
+const inflightRequests = new Map<string, Promise<unknown>>();
+
+function getCachedResponse<T>(key: string): T | null {
+  const hit = responseCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    responseCache.delete(key);
+    return null;
+  }
+  return hit.data as T;
+}
+
+function setCachedResponse(key: string, data: unknown, ttlMs: number) {
+  responseCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
+
+async function withInFlightDedup<T>(key: string, request: () => Promise<T>): Promise<T> {
+  const active = inflightRequests.get(key) as Promise<T> | undefined;
+  if (active) return active;
+  const pending = request().finally(() => {
+    inflightRequests.delete(key);
+  });
+  inflightRequests.set(key, pending);
+  return pending;
+}
+
+function invalidatePocketCache() {
+  for (const key of Array.from(responseCache.keys())) {
+    if (key.startsWith("pockets:")) {
+      responseCache.delete(key);
+    }
+  }
+}
+
 /** URL pre EventSource (SSE) — tokeny v query, lebo EventSource nepodporuje vlastné hlavičky. */
 export function quicksplitStreamUrl(splitId: string, tokens: { joinToken?: string; adminToken?: string }) {
   const p = new URLSearchParams();
@@ -41,7 +76,11 @@ async function getAuthToken(): Promise<string> {
   if (!auth) {
     throw new Error(FIREBASE_SETUP_ERROR);
   }
-  
+
+  if (auth.currentUser) {
+    return auth.currentUser.getIdToken();
+  }
+
   return new Promise((resolve, reject) => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       unsubscribe();
@@ -77,8 +116,13 @@ export type QuickSplitRequestTokens = {
 
 export type PocketTransactionInput = {
   name: string;
-  amountCents: number;
+  amount?: number;
+  amountCents?: number;
+  date?: string;
+  payerUid?: string;
   tag?: string;
+  note?: string;
+  splitAssignedUids?: string[];
   splitMethod?: string;
   paidByUid?: string;
   transactionDate?: string;
@@ -131,6 +175,10 @@ async function fetchQuicksplit(path: string, options: RequestInit & QuickSplitRe
 
 export const api = {
   users: {
+    searchByEmail: async (query: string) => {
+      const qs = new URLSearchParams({ q: query }).toString();
+      return fetchWithAuth(`/users/search/by-email?${qs}`);
+    },
     get: async (userId: string) => {
       return fetchWithAuth(`/users/${userId}`);
     },
@@ -150,6 +198,107 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ imageUrl }),
       });
+    },
+  },
+  pockets: {
+    create: async (body: {
+      name: string;
+      tags?: string[];
+      initialTransactions?: PocketTransactionInput[];
+      inviteEmails?: string[];
+      invitedUserUids?: string[];
+    }) => {
+      const result = await fetchWithAuth('/pockets', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    mine: async () => {
+      const cacheKey = "pockets:mine";
+      const cached = getCachedResponse<unknown>(cacheKey);
+      if (cached) return cached;
+      return withInFlightDedup(cacheKey, async () => {
+        const data = await fetchWithAuth('/pockets/mine');
+        setCachedResponse(cacheKey, data, 12_000);
+        return data;
+      });
+    },
+    get: async (pocketId: string) => {
+      const cacheKey = `pockets:get:${pocketId}`;
+      const cached = getCachedResponse<unknown>(cacheKey);
+      if (cached) return cached;
+      return withInFlightDedup(cacheKey, async () => {
+        const data = await fetchWithAuth(`/pockets/${pocketId}`);
+        setCachedResponse(cacheKey, data, 12_000);
+        return data;
+      });
+    },
+    getFresh: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}`),
+    activities: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}/activities`),
+    update: async (pocketId: string, body: { name?: string; tags?: string[] }) =>
+      fetchWithAuth(`/pockets/${pocketId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    addTransaction: async (
+      pocketId: string,
+      body: PocketTransactionInput,
+    ) => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/transactions`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    updateTransaction: async (
+      pocketId: string,
+      transactionId: string,
+      body: PocketTransactionInput,
+    ) => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/transactions/${encodeURIComponent(transactionId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    deleteTransaction: async (pocketId: string, transactionId: string) => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/transactions/${encodeURIComponent(transactionId)}`, {
+        method: 'DELETE',
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    removeMember: async (pocketId: string, memberUid: string) => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/members/${encodeURIComponent(memberUid)}`, {
+        method: 'DELETE',
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    inviteByEmail: async (pocketId: string, email: string) =>
+      fetchWithAuth(`/pockets/${pocketId}/invite/email`, {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    inviteByUid: async (pocketId: string, userUid: string) =>
+      fetchWithAuth(`/pockets/${pocketId}/invite/user/${encodeURIComponent(userUid)}`, {
+        method: 'POST',
+      }),
+    leave: async (pocketId: string) =>
+      fetchWithAuth(`/pockets/${pocketId}/leave`, {
+        method: 'POST',
+      }),
+    respondToInvite: async (pocketId: string, status: 'accepted' | 'rejected') => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/respond`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      invalidatePocketCache();
+      return result;
     },
   },
 
@@ -182,6 +331,10 @@ export const api = {
         remainderAssignments?: Array<{
           participantId: string;
           adjustmentCents: number;
+        }>;
+        customClaims?: Array<{
+          participantId: string;
+          claimedAmountCents: number;
         }>;
       },
       h: QuickSplitRequestTokens,
@@ -250,40 +403,6 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ paid }),
         ...h,
-      }),
-  },
-  pockets: {
-    mine: async () => fetchWithAuth('/pockets/mine'),
-    create: async (body: {
-      name: string;
-      tags?: string[];
-      initialTransactions?: PocketTransactionInput[];
-      inviteEmails?: string[];
-    }) =>
-      fetchWithAuth('/pockets', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    get: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}`),
-    activities: async (pocketId: string) => fetchWithAuth(`/pockets/${pocketId}/activities`),
-    update: async (pocketId: string, body: { name?: string; tags?: string[] }) =>
-      fetchWithAuth(`/pockets/${pocketId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    addTransaction: async (pocketId: string, body: PocketTransactionInput) =>
-      fetchWithAuth(`/pockets/${pocketId}/transactions`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    inviteByEmail: async (pocketId: string, email: string) =>
-      fetchWithAuth(`/pockets/${pocketId}/invite/email`, {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      }),
-    leave: async (pocketId: string) =>
-      fetchWithAuth(`/pockets/${pocketId}/leave`, {
-        method: 'POST',
       }),
   },
 };

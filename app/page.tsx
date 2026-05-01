@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { Suspense, useRef, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useNavigation } from "@/components/navigation/TopNav";
 import { TopNav } from "@/components/navigation/TopNav";
@@ -18,7 +18,7 @@ import { updateUserPassword, addUserPassword } from "@/lib/firebase/auth";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { MAIN_NAV_ITEMS } from "@/lib/nav-items";
-import { PocketsScreen } from "@/components/pockets/PocketsScreen";
+import { PocketsHome } from "@/components/pockets/PocketsHome";
 
 function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean, email?: string) => void; isPendingNewUser?: boolean }) {
   const { user, loading, signOut } = useAuth();
@@ -677,6 +677,10 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   );
 }
 
+function PocketsScreen() {
+  return <PocketsHome />;
+}
+
 function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean, email?: string) => void; isPendingNewUser?: boolean }) {
   const { activeTab } = useNavigation();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -709,7 +713,7 @@ function Content({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: boolean,
   );
 }
 
-export default function Home() {
+function HomeContent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const { setActiveTab } = useNavigation();
@@ -724,6 +728,7 @@ export default function Home() {
   const [pendingNewUser, setPendingNewUser] = useState(false);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [shouldNavigateToAccount, setShouldNavigateToAccount] = useState(false);
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user && pendingNewUser && !showRegistrationFlow) {
@@ -756,6 +761,7 @@ export default function Home() {
     }
 
     try {
+      setRegistrationError(null);
       const updateData: any = {};
       
       if (step === 1 && stepData.phoneNumber) {
@@ -770,6 +776,9 @@ export default function Home() {
       
       await api.users.update(user.uid, updateData);
     } catch (error: any) {
+      const message = error?.message || "Nepodarilo sa uložiť krok registrácie.";
+      setRegistrationError(message);
+      throw new Error(message);
     }
   };
 
@@ -782,6 +791,7 @@ export default function Home() {
     }
 
     try {
+      setRegistrationError(null);
       const userData = {
         phoneNumber: data.phoneNumber ? `${data.countryCode}${data.phoneNumber}` : null,
         residence: data.residence || null,
@@ -791,6 +801,8 @@ export default function Home() {
 
       await api.users.update(user.uid, userData);
     } catch (error: any) {
+      setRegistrationError(error?.message || "Nepodarilo sa dokončiť registráciu. Skús to prosím znova.");
+      return;
     }
     
     // Nastaviť flag, že sa má presmerovať na účet
@@ -820,6 +832,11 @@ export default function Home() {
   if (showRegistrationFlow) {
     return (
       <TopNav>
+        {registrationError && (
+          <div className="mx-auto mb-3 mt-3 w-full max-w-screen-sm rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {registrationError}
+          </div>
+        )}
         <RegistrationFlow
           initialName={registrationInitialName}
           onComplete={handleRegistrationComplete}
@@ -850,5 +867,19 @@ export default function Home() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background w-full flex items-center justify-center">
+          <div className="text-muted-foreground">Načítavam...</div>
+        </div>
+      }
+    >
+      <HomeContent />
+    </Suspense>
   );
 }

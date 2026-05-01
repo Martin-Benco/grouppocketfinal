@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, Copy, Minus, Plus, Users } from "lucide-react";
+import { Camera, Check, ChevronDown, Copy, Minus, Plus, Users } from "lucide-react";
 import { api, quicksplitStreamUrl, type QuickSplitRequestTokens } from "@/lib/api/client";
 import {
   QS_ACTIVE_ID,
@@ -81,6 +81,16 @@ type QuicksplitView = {
   canJoinMore: boolean;
 };
 
+type BarcodeDetectorResult = {
+  rawValue?: string;
+};
+
+type BarcodeDetectorLike = {
+  detect: (source: HTMLVideoElement) => Promise<BarcodeDetectorResult[]>;
+};
+
+type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
+
 function formatEur(cents: number) {
   return (cents / 100).toFixed(2).replace(".", ",") + " €";
 }
@@ -139,6 +149,14 @@ function centsToInput(cents: number): string {
   return (Math.max(0, cents) / 100).toFixed(2).replace(".", ",");
 }
 
+function sanitizeMoneyInput(raw: string): string {
+  const cleaned = raw.replace(/[^\d.,]/g, "").replace(/\./g, ",");
+  const [whole = "", ...rest] = cleaned.split(",");
+  if (rest.length === 0) return whole;
+  const decimals = rest.join("").replace(/[^\d]/g, "").slice(0, 2);
+  return `${whole},${decimals}`;
+}
+
 function buildPayMeUrl(params: {
   iban: string;
   amountCents: number;
@@ -169,6 +187,7 @@ export function QuickSplitScreen() {
   const [createCount, setCreateCount] = useState(4);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [claimDraft, setClaimDraft] = useState<Record<string, string>>({});
+  const [percentDraft, setPercentDraft] = useState<Record<string, string>>({});
   const claimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [itemsDraft, setItemsDraft] = useState<QuickSplitItemView[]>([]);
   const [newItemName, setNewItemName] = useState("");
@@ -180,6 +199,7 @@ export function QuickSplitScreen() {
   const [showPaymentSuccess, setShowPaymentSuccess] = useState(false);
   const [showStepThreeStatus, setShowStepThreeStatus] = useState(false);
   const customClaimsInitKey = useRef<string | null>(null);
+  const [customSplitEntryMode, setCustomSplitEntryMode] = useState<"amount" | "percent">("amount");
   const totalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customTotalSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -187,6 +207,14 @@ export function QuickSplitScreen() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [scannerSupported, setScannerSupported] = useState(true);
+  const [isPayerSheetOpen, setIsPayerSheetOpen] = useState(false);
+  const [payerSheetDragOffset, setPayerSheetDragOffset] = useState(0);
+  const [isPayerSheetDragging, setIsPayerSheetDragging] = useState(false);
+  const payerSheetDragStartYRef = useRef<number | null>(null);
+  const [isSplitModeSheetOpen, setIsSplitModeSheetOpen] = useState(false);
+  const [splitModeSheetDragOffset, setSplitModeSheetDragOffset] = useState(0);
+  const [isSplitModeSheetDragging, setIsSplitModeSheetDragging] = useState(false);
+  const splitModeSheetDragStartYRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -209,6 +237,15 @@ export function QuickSplitScreen() {
     setErr(null);
     const id = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(QS_ACTIVE_ID) : null;
     if (!id) {
+      setSplit(null);
+      setLoading(false);
+      return;
+    }
+    const existingSession = readQsSession(id);
+    if (!existingSession.joinToken && !existingSession.adminToken) {
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.removeItem(QS_ACTIVE_ID);
+      }
       setSplit(null);
       setLoading(false);
       return;
@@ -335,8 +372,7 @@ export function QuickSplitScreen() {
     return split.participants.reduce((sum, p) => sum + (liveClaimCentsByParticipant.get(p.id) ?? 0), 0);
   }, [split, liveClaimCentsByParticipant]);
 
-  const displayedTotalCents =
-    split?.splitMode === "custom_amounts" ? customLiveClaimsSumCents : (split?.totalCents ?? 0);
+  const displayedTotalCents = split?.totalCents ?? 0;
   const customLiveDeltaCents = split && split.splitMode === "custom_amounts" ? displayedTotalCents - customLiveClaimsSumCents : 0;
   const customLiveClaimsMatch = split?.splitMode === "custom_amounts" ? customLiveDeltaCents === 0 : false;
 
@@ -358,11 +394,6 @@ export function QuickSplitScreen() {
       participantSecret: secret,
     };
   }, [split]);
-
-  useEffect(() => {
-    if (!split || split.splitMode !== "items" || split.flowStep !== "splitting") return;
-    setItemsDraft(split.splitItems?.length ? split.splitItems.map((x) => ({ ...x })) : []);
-  }, [split, split?.id, split?.flowStep, split?.splitMode, split?.splitItems]);
 
   useEffect(() => {
     if (!split || split.splitMode !== "custom_amounts" || split.flowStep !== "splitting") {
@@ -395,46 +426,15 @@ export function QuickSplitScreen() {
   }, [split, split?.id, split?.targetParticipantCount]);
 
   useEffect(() => {
-    if (!split || !isAdminSession || split.splitMode !== "custom_amounts") return;
-    if (split.totalCents === customLiveClaimsSumCents) return;
-    if (customTotalSyncTimerRef.current) clearTimeout(customTotalSyncTimerRef.current);
-    customTotalSyncTimerRef.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const v = (await api.quicksplits.update(
-            split.id,
-            { totalCents: customLiveClaimsSumCents },
-            adminHeaders(),
-          )) as QuicksplitView;
-          setSplit(v);
-        } catch (e: unknown) {
-          setErr(e instanceof Error ? e.message : "Chyba");
-        }
-      })();
-    }, 300);
-  }, [split, isAdminSession, customLiveClaimsSumCents, adminHeaders]);
-
-  useEffect(() => {
-    if (!split || split.splitMode !== "custom_amounts") return;
-    const key = `qs:${split.id}:manual-remainder`;
-    if (typeof window !== "undefined") {
-      const raw = window.localStorage.getItem(key);
-      if (raw) {
-        try {
-          setRemainderDraft(JSON.parse(raw) as Record<string, string>);
-        } catch {
-          setRemainderDraft({});
-        }
-      } else {
-        setRemainderDraft({});
-      }
+    if (!split || split.splitMode !== "custom_amounts" || customSplitEntryMode !== "percent") return;
+    const next: Record<string, string> = {};
+    for (const p of split.participants) {
+      const cents = liveClaimCentsByParticipant.get(p.id) ?? 0;
+      const pct = displayedTotalCents > 0 ? (cents / displayedTotalCents) * 100 : 0;
+      next[p.id] = pct > 0 ? pct.toFixed(2).replace(".", ",") : "";
     }
-  }, [split, split?.id, split?.splitMode]);
-
-  useEffect(() => {
-    if (!split || split.splitMode !== "custom_amounts" || typeof window === "undefined") return;
-    window.localStorage.setItem(`qs:${split.id}:manual-remainder`, JSON.stringify(remainderDraft));
-  }, [split, split?.id, split?.splitMode, remainderDraft]);
+    setPercentDraft(next);
+  }, [split, split?.id, split?.splitMode, customSplitEntryMode, displayedTotalCents, liveClaimCentsByParticipant]);
 
   useEffect(() => {
     if (!split || !myParticipantId || typeof window === "undefined") {
@@ -758,7 +758,11 @@ export function QuickSplitScreen() {
     let cancelled = false;
     const start = async () => {
       setScannerError(null);
-      if (typeof window === "undefined" || !(window as Window & { BarcodeDetector?: typeof BarcodeDetector }).BarcodeDetector) {
+      const detectorCtor =
+        typeof window === "undefined"
+          ? undefined
+          : (window as Window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
+      if (!detectorCtor) {
         setScannerSupported(false);
         return;
       }
@@ -777,7 +781,7 @@ export function QuickSplitScreen() {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => undefined);
         }
-        const detector = new BarcodeDetector({ formats: ["qr_code"] });
+        const detector = new detectorCtor({ formats: ["qr_code"] });
         const tick = async () => {
           if (cancelled || !scannerOpen || !videoRef.current) return;
           try {
@@ -841,6 +845,18 @@ export function QuickSplitScreen() {
     [stopScanner],
   );
 
+  useEffect(() => {
+    if (!isPayerSheetOpen && !isSplitModeSheetOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.touchAction = previousTouchAction;
+    };
+  }, [isPayerSheetOpen, isSplitModeSheetOpen]);
+
   if (loading && !split) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
@@ -861,7 +877,8 @@ export function QuickSplitScreen() {
               <label className="text-xs text-muted-foreground block mb-1">Celková suma účtu</label>
               <input
                 value={createTotal}
-                onChange={(e) => setCreateTotal(e.target.value)}
+                onChange={(e) => setCreateTotal(sanitizeMoneyInput(e.target.value))}
+                inputMode="decimal"
                 placeholder="napr. 120,50"
                 className="w-full h-14 px-4 rounded-xl bg-background border border-foreground/20 text-foreground"
               />
@@ -945,6 +962,106 @@ export function QuickSplitScreen() {
     setErr(null);
   };
 
+  const selectedPayer =
+    split.participants.find((p) => p.id === split.payerParticipantId) || null;
+  const selectedPayerName = selectedPayer?.displayName || "Vyber platiteľa";
+
+  const closePayerSheet = () => {
+    setIsPayerSheetOpen(false);
+    setIsPayerSheetDragging(false);
+    setPayerSheetDragOffset(0);
+    payerSheetDragStartYRef.current = null;
+  };
+
+  const handlePayerSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    payerSheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsPayerSheetDragging(true);
+  };
+
+  const handlePayerSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (payerSheetDragStartYRef.current === null) return;
+    const currentY = e.touches[0]?.clientY ?? payerSheetDragStartYRef.current;
+    const delta = Math.max(0, currentY - payerSheetDragStartYRef.current);
+    setPayerSheetDragOffset(delta);
+  };
+
+  const handlePayerSheetTouchEnd = () => {
+    const shouldClose = payerSheetDragOffset > 90;
+    setIsPayerSheetDragging(false);
+    if (shouldClose) {
+      closePayerSheet();
+      return;
+    }
+    setPayerSheetDragOffset(0);
+    payerSheetDragStartYRef.current = null;
+  };
+
+  const canCloseSplitModeSheet = split.splitMode === "custom_amounts" ? customLiveClaimsMatch : true;
+
+  const closeSplitModeSheet = async () => {
+    if (!canCloseSplitModeSheet) {
+      setSplitModeSheetDragOffset(0);
+      setIsSplitModeSheetDragging(false);
+      splitModeSheetDragStartYRef.current = null;
+      return;
+    }
+    if (split.splitMode === "custom_amounts" && canEditSplitting) {
+      const payload = split.participants.map((p) => ({
+        participantId: p.id,
+        claimedAmountCents: liveClaimCentsByParticipant.get(p.id) ?? 0,
+      }));
+      try {
+        const v = (await api.quicksplits.update(
+          split.id,
+          { customClaims: payload },
+          adminHeaders(),
+        )) as QuicksplitView;
+        setSplit(v);
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : "Chyba");
+        return;
+      }
+    }
+    setIsSplitModeSheetOpen(false);
+    setIsSplitModeSheetDragging(false);
+    setSplitModeSheetDragOffset(0);
+    splitModeSheetDragStartYRef.current = null;
+  };
+
+  const handleSplitModeSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    splitModeSheetDragStartYRef.current = e.touches[0]?.clientY ?? null;
+    setIsSplitModeSheetDragging(true);
+  };
+
+  const handleSplitModeSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (splitModeSheetDragStartYRef.current === null) return;
+    const currentY = e.touches[0]?.clientY ?? splitModeSheetDragStartYRef.current;
+    const delta = Math.max(0, currentY - splitModeSheetDragStartYRef.current);
+    setSplitModeSheetDragOffset(delta);
+  };
+
+  const handleSplitModeSheetTouchEnd = () => {
+    const shouldClose = splitModeSheetDragOffset > 90;
+    setIsSplitModeSheetDragging(false);
+    if (shouldClose) {
+      void closeSplitModeSheet();
+      return;
+    }
+    setSplitModeSheetDragOffset(0);
+    splitModeSheetDragStartYRef.current = null;
+  };
+
+  const applySplitModeChoice = async (mode: "equal" | "amount" | "percent") => {
+    if (!split) return;
+    if (mode === "equal") {
+      setCustomSplitEntryMode("amount");
+      await setSplitMode("equal");
+      return;
+    }
+    setCustomSplitEntryMode(mode === "amount" ? "amount" : "percent");
+    await setSplitMode("custom_amounts");
+  };
+
   return (
     <div className="min-h-screen bg-background w-full pb-28">
       <div className="max-w-screen-sm mx-auto px-4 py-6 space-y-6">
@@ -958,10 +1075,11 @@ export function QuickSplitScreen() {
             <input
               value={splitTotalDraft}
               onChange={(e) => {
-                const v = e.target.value;
+                const v = sanitizeMoneyInput(e.target.value);
                 setSplitTotalDraft(v);
                 scheduleTotalSave(v);
               }}
+              inputMode="decimal"
               disabled={!canEditCreateSection}
               className="w-full h-12 px-3 rounded-xl bg-background border border-foreground/20 text-foreground disabled:opacity-70"
             />
@@ -1109,347 +1227,42 @@ export function QuickSplitScreen() {
         {split.flowStep !== "waiting" && split.flowStep !== "closed" && (
           <section className="space-y-5">
             <div className="space-y-2">
-              <label className="text-xs text-muted-foreground block">Celková suma (EUR)</label>
-              <input
-                value={splitTotalDraft}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setSplitTotalDraft(v);
-                  if (split.splitMode !== "custom_amounts") {
-                    scheduleTotalSave(v);
-                  }
-                }}
-                disabled={!canEditSplitting || split.splitMode === "custom_amounts"}
-                placeholder="napr. 120,50"
-                className="w-full h-12 px-3 rounded-xl bg-background border border-foreground/20 text-foreground disabled:opacity-60"
-              />
-              {split.splitMode === "custom_amounts" && (
-                <p className="text-xs text-muted-foreground">V tomto režime sa celková suma počíta automaticky zo zadaných súm.</p>
-              )}
-            </div>
-            <div className="space-y-2">
               <label className="text-xs text-muted-foreground block">Kto platil</label>
-              <select
-                value={split.payerParticipantId}
-                disabled={!canEditSplitting}
-                onChange={(e) => void setPayer(e.target.value)}
-                className="w-full h-12 px-3 rounded-xl bg-background border border-foreground/20 text-foreground disabled:opacity-60"
-              >
-                {split.participants.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.displayName}
-                    {p.id === myParticipantId ? " (ty)" : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={!canEditSplitting}
+                  onClick={() => setIsPayerSheetOpen(true)}
+                  className="w-full h-12 px-3 pr-10 rounded-xl bg-background border border-foreground/20 text-left text-foreground disabled:opacity-60"
+                >
+                  {selectedPayerName}
+                </button>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/70" />
+              </div>
             </div>
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">Spôsob delenia</p>
-              <div className="grid grid-cols-3 gap-2">
-                <Button
+              <div className="relative">
+                <button
                   type="button"
-                  variant="outline"
-                  className={
-                    split.splitMode === "equal"
-                      ? "h-11 rounded-xl text-xs border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "h-11 rounded-xl text-xs border-foreground/20 bg-transparent text-foreground hover:bg-muted"
-                  }
                   disabled={!canEditSplitting}
-                  onClick={() => void setSplitMode("equal")}
+                  onClick={() => setIsSplitModeSheetOpen(true)}
+                  className="w-full h-12 px-3 pr-10 rounded-xl bg-background border border-foreground/20 text-left text-foreground disabled:opacity-60"
                 >
-                  Rovnako
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={
-                    split.splitMode === "custom_amounts"
-                      ? "h-11 rounded-xl text-xs border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "h-11 rounded-xl text-xs border-foreground/20 bg-transparent text-foreground hover:bg-muted"
-                  }
-                  disabled={!canEditSplitting}
-                  onClick={() => void setSplitMode("custom_amounts")}
-                >
-                  Každý svoju sumu
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={
-                    split.splitMode === "items"
-                      ? "h-11 rounded-xl text-xs border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "h-11 rounded-xl text-xs border-foreground/20 bg-transparent text-foreground hover:bg-muted"
-                  }
-                  disabled={!canEditSplitting}
-                  onClick={() => void setSplitMode("items")}
-                >
-                  Položky
-                </Button>
+                  {split.splitMode === "equal"
+                    ? "Rovnomerne"
+                    : split.splitMode === "custom_amounts"
+                      ? customSplitEntryMode === "percent"
+                        ? "Percentá"
+                        : "Na množstvo"
+                      : "Vyber spôsob"}
+                </button>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/70" />
               </div>
             </div>
-
-            {split.splitMode === "equal" && (
-              <div className="space-y-3">
-                <h2 className="text-base font-semibold text-foreground">Rovnako</h2>
-                {split.participants.length >= 3 && (
-                  <p className="text-xs text-muted-foreground">Vypni tých, čo neplatia alebo nič nemali.</p>
-                )}
-                <div className="rounded-2xl border border-foreground/10 divide-y divide-foreground/10">
-                  {split.participants.map((p) => {
-                    const excluded = split.equalExcludedParticipantIds.includes(p.id);
-                    const includedCount = split.participants.length - split.equalExcludedParticipantIds.length;
-                    const canToggleExclude = excluded || (split.participants.length >= 3 && includedCount > 1);
-                    return (
-                      <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{p.displayName}</p>
-                          <p className="text-xs text-muted-foreground">Podiel: {formatEur(p.shareCents)}</p>
-                        </div>
-                        {canEditSplitting && split.participants.length >= 3 ? (
-                          <label className="flex items-center gap-2 shrink-0 text-xs text-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={excluded}
-                              disabled={!canToggleExclude}
-                              onChange={(e) => {
-                                if (!canToggleExclude) return;
-                                void toggleEqualExclude(p.id, e.target.checked);
-                              }}
-                              className="rounded border-foreground/30"
-                            />
-                            {excluded ? "Vylúčený" : "Zahrnúť"}
-                          </label>
-                        ) : split.participants.length >= 3 ? (
-                          <span className="text-xs text-muted-foreground">{excluded ? "Vylúčený" : ""}</span>
-                        ) : null
-                        }
-                      </div>
-                    );
-                  })}
-                </div>
-                {canEditSplitting && (
-                  <Button type="button" className="w-full h-12 bg-emerald-600 text-white" onClick={() => void finalizeSplitting()}>
-                    Hotovo
-                  </Button>
-                )}
-              </div>
-            )}
-
-            {split.splitMode === "custom_amounts" && (
-              <div className="space-y-3">
-                <h2 className="text-base font-semibold text-foreground">Každý svoju sumu</h2>
-                <p className="text-sm">
-                  Zadané <span className="font-bold text-primary">{formatEur(customLiveClaimsSumCents)}</span> z celkových{" "}
-                  <span className="font-bold">{formatEur(displayedTotalCents)}</span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Stav: {split.participants.filter((p) => p.claimedAmountCents != null).length}/{split.participants.length} členov zadalo sumu
-                </p>
-                {customLiveDeltaCents < 0 && (
-                  <p className="text-sm text-red-400">
-                    Nad limit o <span className="font-bold">{formatEur(Math.abs(customLiveDeltaCents))}</span>
-                  </p>
-                )}
-                {customLiveDeltaCents > 0 && (
-                  <p className="text-sm text-amber-400">
-                    Zostatok <span className="font-bold">{formatEur(customLiveDeltaCents)}</span> nerozdelený
-                  </p>
-                )}
-                {customLiveClaimsMatch && (
-                  <p className="text-sm text-emerald-400">Súčet sedí ✅</p>
-                )}
-                <div className="rounded-2xl border border-foreground/10 divide-y divide-foreground/10">
-                  {split.participants.map((p) => {
-                    const isMe = p.id === myParticipantId;
-                    const liveClaimCents = liveClaimCentsByParticipant.get(p.id) ?? 0;
-                    return (
-                      <div key={p.id} className="px-4 py-3 space-y-1">
-                        <p className="text-sm font-medium text-foreground">{p.displayName}{isMe ? " (ty)" : ""}</p>
-                        {isMe && isSplittingStep ? (
-                          <input
-                            value={claimDraft[p.id] ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setClaimDraft((prev) => ({ ...prev, [p.id]: v }));
-                              scheduleClaimSave(p.id, v);
-                            }}
-                            placeholder="0,00"
-                            className="w-full h-11 px-3 rounded-xl bg-background border border-foreground/20 text-foreground"
-                          />
-                        ) : (
-                          <p className="text-sm text-muted-foreground">
-                            {p.claimedAmountCents != null ? `Zadané: ${formatEur(p.claimedAmountCents)}` : "Nezadané"}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground">Výsledný podiel: {formatEur(liveClaimCents)}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-                {canEditSplitting && split.customRemainderCents > 0 && (
-                  <div className="space-y-2 rounded-xl border border-foreground/10 p-3">
-                    <p className="text-xs text-muted-foreground">Manuálne priradenie zostatku (v EUR)</p>
-                    <div className="space-y-2">
-                      {split.participants.map((p) => (
-                        <div key={p.id} className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground w-28 truncate">{p.displayName}</span>
-                          <input
-                            value={remainderDraft[p.id] ?? ""}
-                            onChange={(e) => setRemainderDraft((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                            placeholder="0,00"
-                            className="flex-1 h-10 px-3 rounded-xl bg-background border border-foreground/20 text-foreground text-sm"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <Button type="button" variant="outline" className="w-full h-10" onClick={() => void assignRemainderManually()}>
-                      Priradiť manuálne
-                    </Button>
-                    <Button type="button" variant="outline" className="w-full h-10" onClick={() => void distributeRemainder()}>
-                      Rozdeliť zostatok rovnomerne
-                    </Button>
-                  </div>
-                )}
-                {canEditSplitting && (
-                  <Button
-                    type="button"
-                    disabled={!customLiveClaimsMatch}
-                    className="w-full h-12 bg-emerald-600 text-white"
-                    onClick={() => void finalizeSplitting()}
-                  >
-                    Hotovo
-                  </Button>
-                )}
-              </div>
-            )}
-
-            {split.splitMode === "items" && (
-              <div className="space-y-3">
-                <h2 className="text-base font-semibold text-foreground">Položky</h2>
-                <p className="text-sm text-muted-foreground">
-                  Súčet položiek:{" "}
-                  <span className="font-semibold text-primary">
-                    {formatEur((split.splitItems || []).reduce((s, it) => s + (it.amountCents || 0), 0))}
-                  </span>
-                </p>
-                {!isAdminSession && (
-                  <div className="rounded-2xl border border-foreground/10 divide-y divide-foreground/10">
-                    {(split.splitItems || []).length === 0 ? (
-                      <p className="p-4 text-sm text-muted-foreground">Zatiaľ žiadne položky.</p>
-                    ) : (
-                      (split.splitItems || []).map((it) => (
-                        <div key={it.id} className="px-4 py-3 space-y-1">
-                          <div className="flex justify-between text-sm">
-                            <span className="font-medium text-foreground">{it.name}</span>
-                            <span className="text-primary font-semibold">{formatEur(it.amountCents)}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {it.consumerParticipantIds
-                              .map((id) => split.participants.find((x) => x.id === id)?.displayName || "?")
-                              .join(", ")}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-                {canEditSplitting ? (
-                  <>
-                    <div className="flex gap-2">
-                      <input
-                        value={newItemName}
-                        onChange={(e) => setNewItemName(e.target.value)}
-                        placeholder="Názov položky"
-                        className="flex-1 h-11 px-3 rounded-xl bg-background border border-foreground/20 text-foreground text-sm"
-                      />
-                      <input
-                        value={newItemAmount}
-                        onChange={(e) => setNewItemAmount(e.target.value)}
-                        placeholder="Suma"
-                        className="w-24 h-11 px-2 rounded-xl bg-background border border-foreground/20 text-foreground text-sm"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full h-10"
-                      onClick={() => {
-                        const cents = parseEuroToCents(newItemAmount);
-                        if (!newItemName.trim() || cents === null || cents <= 0) return;
-                        const id = crypto.randomUUID?.() ?? `it_${Date.now()}`;
-                        setItemsDraft((prev) => [
-                          ...prev,
-                          { id, name: newItemName.trim(), amountCents: cents, consumerParticipantIds: [] },
-                        ]);
-                        setNewItemName("");
-                        setNewItemAmount("");
-                      }}
-                    >
-                      Pridať položku
-                    </Button>
-                    <div className="space-y-4">
-                      {itemsDraft.map((it, idx) => (
-                        <div key={it.id} className="rounded-xl border border-foreground/15 p-3 space-y-2">
-                          <div className="flex justify-between gap-2">
-                            <span className="text-sm font-medium text-foreground">{it.name}</span>
-                            <span className="text-sm text-primary font-semibold">{formatEur(it.amountCents)}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground">Konzumenti</p>
-                          <div className="flex flex-wrap gap-2">
-                            {split.participants.map((p) => {
-                              const on = it.consumerParticipantIds.includes(p.id);
-                              return (
-                                <label key={p.id} className="flex items-center gap-1 text-xs text-foreground cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={(e) => {
-                                      const next = e.target.checked
-                                        ? [...it.consumerParticipantIds, p.id]
-                                        : it.consumerParticipantIds.filter((x) => x !== p.id);
-                                      setItemsDraft((prev) =>
-                                        prev.map((row, i) => (i === idx ? { ...row, consumerParticipantIds: next } : row)),
-                                      );
-                                    }}
-                                    className="rounded border-foreground/30"
-                                  />
-                                  {p.displayName}
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-400 h-8"
-                            onClick={() => setItemsDraft((prev) => prev.filter((_, i) => i !== idx))}
-                          >
-                            Odstrániť položku
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <Button type="button" className="w-full h-11 bg-primary" onClick={() => void saveItems()}>
-                      Uložiť položky
-                    </Button>
-                    <Button type="button" className="w-full h-12 bg-emerald-600 text-white" onClick={() => void finalizeSplitting()}>
-                      Hotovo
-                    </Button>
-                  </>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Admin pripravuje položky…</p>
-                )}
-                <div className="rounded-2xl border border-foreground/10 divide-y divide-foreground/10">
-                  {split.participants.map((p) => (
-                    <div key={p.id} className="px-4 py-2 flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{p.displayName}</span>
-                      <span className="font-semibold text-foreground">{formatEur(p.shareCents)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <p className="text-xs text-foreground/60">
+              Delenie nastavíš v popupe „Spôsob delenia“.
+            </p>
           </section>
         )}
 
@@ -1637,6 +1450,244 @@ export function QuickSplitScreen() {
           </div>
         )}
 
+      </div>
+
+      <div
+        className={`fixed inset-0 z-[145] transition-opacity duration-300 ${
+          isPayerSheetOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
+          onClick={closePayerSheet}
+          aria-label="Zavrieť výber platiteľa"
+        />
+        <div
+          className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
+            isPayerSheetDragging ? "" : "transition-transform duration-300 ease-out"
+          }`}
+          onTouchStart={handlePayerSheetTouchStart}
+          onTouchMove={handlePayerSheetTouchMove}
+          onTouchEnd={handlePayerSheetTouchEnd}
+          onTouchCancel={handlePayerSheetTouchEnd}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            height: "50vh",
+            transform: isPayerSheetOpen ? `translateY(${payerSheetDragOffset}px)` : "translateY(100%)",
+          }}
+        >
+          <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
+          <h2 className="mb-3 text-base font-semibold text-foreground">Kto platil</h2>
+          <div className="h-[calc(50vh-70px)] space-y-2 overflow-y-auto pr-1">
+            {split.participants.map((p) => {
+              const isSelected = p.id === split.payerParticipantId;
+              const displayName = `${p.displayName}${p.id === myParticipantId ? " (ty)" : ""}`;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    void setPayer(p.id);
+                    closePayerSheet();
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                    isSelected
+                      ? "border-[rgb(124,58,237)] bg-[rgba(124,58,237,0.18)]"
+                      : "border-white/10 bg-white/[0.02] hover:bg-white/[0.06]"
+                  }`}
+                >
+                  <span className="truncate text-sm text-foreground">{displayName}</span>
+                  {isSelected && (
+                    <span className="text-xs font-semibold text-[rgb(196,181,253)]">Vybraný</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={`fixed inset-0 z-[146] transition-opacity duration-300 ${
+          isSplitModeSheetOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
+          onClick={() => void closeSplitModeSheet()}
+          aria-label="Zavrieť výber spôsobu delenia"
+        />
+        <div
+          className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
+            isSplitModeSheetDragging ? "" : "transition-transform duration-300 ease-out"
+          }`}
+          onTouchStart={handleSplitModeSheetTouchStart}
+          onTouchMove={handleSplitModeSheetTouchMove}
+          onTouchEnd={handleSplitModeSheetTouchEnd}
+          onTouchCancel={handleSplitModeSheetTouchEnd}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            height: "50vh",
+            transform: isSplitModeSheetOpen ? `translateY(${splitModeSheetDragOffset}px)` : "translateY(100%)",
+          }}
+        >
+          <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
+          <h2 className="mb-3 text-base font-semibold text-foreground">Spôsob delenia</h2>
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            {[
+              { id: "equal", label: "Rovnomerne" },
+              { id: "amount", label: "Na množstvo" },
+              { id: "percent", label: "Percentá" },
+            ].map((mode) => {
+              const selected =
+                (mode.id === "equal" && split.splitMode === "equal") ||
+                (mode.id === "amount" && split.splitMode === "custom_amounts" && customSplitEntryMode === "amount") ||
+                (mode.id === "percent" && split.splitMode === "custom_amounts" && customSplitEntryMode === "percent");
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    void applySplitModeChoice(mode.id as "equal" | "amount" | "percent");
+                  }}
+                  className={`rounded-lg border px-2 py-2 text-xs transition ${
+                    selected
+                      ? "border-[rgb(124,58,237)] bg-[rgba(124,58,237,0.18)] text-[rgb(196,181,253)]"
+                      : "border-white/10 bg-white/[0.02] text-foreground/80"
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mb-3 text-xs leading-5 text-foreground/65">
+            {split.splitMode === "equal"
+              ? "Rovnomerne: vyber, ktorí členovia budú zahrnutí do rozdelenia. Každý označený člen bude mať rovnaký podiel."
+              : customSplitEntryMode === "amount"
+                ? "Na množstvo: každému členovi zadaj presnú sumu v eurách, ktorú má mať priradenú."
+                : "Percentá: každému členovi zadaj percentuálny podiel na celkovej sume."}
+          </p>
+
+          <div
+            className={`space-y-2 overflow-y-auto pr-1 ${
+              split.splitMode === "custom_amounts" ? "max-h-[calc(50vh-220px)]" : "max-h-[calc(50vh-190px)]"
+            }`}
+          >
+            {split.participants.map((p) => {
+              const excluded = split.equalExcludedParticipantIds.includes(p.id);
+              const includedCount = split.participants.length - split.equalExcludedParticipantIds.length;
+              const canToggleExclude = excluded || (split.participants.length >= 3 && includedCount > 1);
+              const liveClaimCents = liveClaimCentsByParticipant.get(p.id) ?? 0;
+              if (split.splitMode === "equal") {
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={!canEditSplitting || !canToggleExclude}
+                    onClick={() => {
+                      if (!canToggleExclude) return;
+                      void toggleEqualExclude(p.id, !excluded);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5 text-left disabled:opacity-70"
+                  >
+                    <span className="truncate text-sm text-foreground">
+                      {p.displayName}
+                      {p.id === myParticipantId ? " (ty)" : ""}
+                    </span>
+                    <span
+                      className={`flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                        !excluded ? "border-[rgb(124,58,237)] bg-[rgb(124,58,237)] text-white" : "border-white/20 text-transparent"
+                      }`}
+                    >
+                      <Check className="h-4 w-4" />
+                    </span>
+                  </button>
+                );
+              }
+
+              return (
+                <div key={p.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5">
+                  <span className="truncate text-sm text-foreground">
+                    {p.displayName}
+                    {p.id === myParticipantId ? " (ty)" : ""}
+                  </span>
+                  <div className="flex h-11 w-32 items-end justify-end gap-3">
+                    <input
+                      value={customSplitEntryMode === "percent" ? percentDraft[p.id] ?? "" : claimDraft[p.id] ?? ""}
+                      onChange={(e) => {
+                        const v = sanitizeMoneyInput(e.target.value);
+                        if (customSplitEntryMode === "percent") {
+                          setPercentDraft((prev) => ({ ...prev, [p.id]: v }));
+                          const parsed = Number(v.replace(",", "."));
+                          const nextCents =
+                            Number.isFinite(parsed) && parsed >= 0 && displayedTotalCents > 0
+                              ? Math.round((displayedTotalCents * parsed) / 100)
+                              : 0;
+                          const euroRaw = (nextCents / 100).toFixed(2).replace(".", ",");
+                          setClaimDraft((prev) => ({ ...prev, [p.id]: euroRaw }));
+                          return;
+                        }
+                        setClaimDraft((prev) => ({ ...prev, [p.id]: v }));
+                      }}
+                      inputMode="decimal"
+                      placeholder="0"
+                      disabled={!canEditSplitting}
+                      className="w-full border-b-2 border-white/25 bg-transparent pb-0.5 text-right text-lg font-semibold text-foreground placeholder:text-foreground/35 focus:border-[rgb(124,58,237)] focus:outline-none disabled:opacity-70"
+                    />
+                    <span className="pb-0.5 text-lg font-semibold text-foreground/85">
+                      {customSplitEntryMode === "percent" ? "%" : "€"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {split.splitMode === "custom_amounts" && (
+            <div className="mt-3 px-0.5 py-1 text-xs">
+              <div className="flex items-center justify-between text-foreground/70">
+                <span>Celkovo</span>
+                <span className="font-semibold text-foreground">{formatEur(displayedTotalCents)}</span>
+              </div>
+              <div className="mt-1.5 flex items-center justify-between text-foreground/70">
+                <span>Rozdelené</span>
+                <span className="font-semibold text-foreground">{formatEur(customLiveClaimsSumCents)}</span>
+              </div>
+              <div className="mt-2">
+                {customLiveDeltaCents < 0 ? (
+                  <span className="font-medium text-red-300">
+                    Nad limit o {formatEur(Math.abs(customLiveDeltaCents))}
+                  </span>
+                ) : customLiveDeltaCents > 0 ? (
+                  <span className="font-medium text-amber-300">
+                    Chýba rozdeliť {formatEur(customLiveDeltaCents)}
+                  </span>
+                ) : (
+                  <span className="font-medium text-emerald-400">Súčet sedí ✅</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {split.splitMode === "custom_amounts" && !canCloseSplitModeSheet && (
+            <p className="text-[11px] text-amber-300">Aby sa popup zavrel, súčet musí byť presne {formatEur(displayedTotalCents)}.</p>
+          )}
+
+          {canEditSplitting && (
+            <Button
+              type="button"
+              disabled={split.splitMode === "custom_amounts" ? !customLiveClaimsMatch : false}
+              className="mt-3 w-full h-11 bg-emerald-600 text-white"
+              onClick={() => void finalizeSplitting()}
+            >
+              Hotovo
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -22,6 +22,16 @@ class QuicksplitRemainderAssignmentDto {
   adjustmentCents!: number;
 }
 
+class QuicksplitCustomClaimDto {
+  @IsString()
+  @MinLength(8)
+  participantId!: string;
+
+  @IsInt()
+  @Min(0)
+  claimedAmountCents!: number;
+}
+
 export class UpdateQuicksplitDto {
   @IsOptional()
   @IsInt()
@@ -71,4 +81,11 @@ export class UpdateQuicksplitDto {
   @ValidateNested({ each: true })
   @Type(() => QuicksplitRemainderAssignmentDto)
   remainderAssignments?: QuicksplitRemainderAssignmentDto[];
+
+  /** Hromadné nastavenie súm pre režim "Každý svoju sumu". */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuicksplitCustomClaimDto)
+  customClaims?: QuicksplitCustomClaimDto[];
 }

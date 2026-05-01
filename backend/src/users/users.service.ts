@@ -6,6 +6,46 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersService {
   constructor(private firebaseService: FirebaseService) {}
 
+  private async buildPublicUser(uid: string, fallbackEmail?: string | null) {
+    const userDoc = await this.firebaseService.getFirestore().collection('users').doc(uid).get();
+    const profile = userDoc.exists ? userDoc.data() || {} : {};
+
+    return {
+      uid,
+      email: (profile.email as string) || fallbackEmail || null,
+      fullName: (profile.fullName as string) || null,
+      profileImageUrl: (profile.profileImageUrl as string) || null,
+    };
+  }
+
+  async searchUsersByEmail(query: string, requesterId: string) {
+    const normalizedQuery = (query || '').trim().toLowerCase();
+    if (!normalizedQuery || !normalizedQuery.includes('@') || normalizedQuery.length < 5) {
+      return { users: [] };
+    }
+
+    const auth = this.firebaseService.getAuth();
+    const matches = new Map<string, { uid: string; email: string | null }>();
+    try {
+      const userRecord = await auth.getUserByEmail(normalizedQuery);
+      matches.set(userRecord.uid, {
+        uid: userRecord.uid,
+        email: userRecord.email || null,
+      });
+    } catch {
+      return { users: [] };
+    }
+
+    const users = await Promise.all(
+      Array.from(matches.values())
+        .filter((user) => user.uid !== requesterId)
+        .slice(0, 20)
+        .map((user) => this.buildPublicUser(user.uid, user.email)),
+    );
+
+    return { users };
+  }
+
   async getUser(userId: string, requesterId: string) {
     if (userId !== requesterId) {
       throw new ForbiddenException('Access denied');

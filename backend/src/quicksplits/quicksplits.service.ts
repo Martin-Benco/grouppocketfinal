@@ -712,6 +712,33 @@ export class QuicksplitsService {
       updates.splitItems = this.normalizeIncomingItems(dto.splitItems, partsBefore);
     }
 
+    if (dto.customClaims !== undefined) {
+      const merged = { ...data, ...updates } as DocumentData;
+      const fs = this.normalizeFlowStep(merged);
+      if (fs !== 'splitting') {
+        throw new BadRequestException('Vlastné sumy sa dajú meniť len v kroku delenia.');
+      }
+      if ((merged.splitMode as string) !== 'custom_amounts') {
+        throw new BadRequestException('Vlastné sumy sa dajú meniť len v režime „Každý svoju sumu“.');
+      }
+      this.validateParticipantIds(
+        partsBefore,
+        dto.customClaims.map((row) => row.participantId),
+      );
+      const byId = new Map<string, number>();
+      for (const row of dto.customClaims) {
+        byId.set(row.participantId, row.claimedAmountCents);
+      }
+      const batch = this.firebase.getFirestore().batch();
+      for (const p of partsBefore) {
+        batch.update(this.participantsRef(splitId).doc(p.id), {
+          claimedAmountCents: byId.get(p.id) ?? 0,
+          adjustmentCents: 0,
+        });
+      }
+      await batch.commit();
+    }
+
     if (dto.flowStep !== undefined) {
       if (dto.flowStep === 'splitting' && flowStepBefore === 'waiting') {
         updates.flowStep = 'splitting';
@@ -801,44 +828,50 @@ export class QuicksplitsService {
     joinToken: string | undefined,
     firebaseUid: string | null | undefined,
   ) {
-    const { ref, data } = await this.getSplitDoc(splitId);
-    if (!this.verifyJoin(data, joinToken)) {
-      throw new ForbiddenException('Neplatný invite token');
-    }
-
-    const flowStep = this.normalizeFlowStep(data);
-    const legacy = this.isLegacySplit(data);
-    if (!legacy && flowStep !== 'waiting') {
-      throw new BadRequestException('Do tohto splitu sa už nedá pripojiť.');
-    }
-
-    const existing = await this.loadParticipants(splitId);
-    if (!legacy) {
-      const cap = Math.min(
-        10,
-        Math.max(2, (data.targetParticipantCount as number) || existing.length + 1),
-      );
-      if (existing.length >= cap) {
-        throw new BadRequestException('Kapacita splitu je naplnená.');
-      }
-    }
-
     const pid = randomUUID();
     const secret = randomToken(16);
     const now = new Date().toISOString();
-
-    await this.participantsRef(splitId).doc(pid).set({
-      displayName: dto.displayName.trim(),
-      userUid: firebaseUid ?? null,
-      iban: null,
-      secretTokenHash: hashToken(secret),
-      createdAt: now,
-      markedPaidAt: null,
-      claimedAmountCents: null,
-      adjustmentCents: 0,
+    const ref = this.col().doc(splitId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const splitSnap = await tx.get(ref);
+      if (!splitSnap.exists) {
+        throw new NotFoundException('QuickSplit nenájdený');
+      }
+      const data = splitSnap.data()!;
+      if (!this.verifyJoin(data, joinToken)) {
+        throw new ForbiddenException('Neplatný invite token');
+      }
+      const flowStep = this.normalizeFlowStep(data);
+      const legacy = this.isLegacySplit(data);
+      if (!legacy && flowStep !== 'waiting') {
+        throw new BadRequestException('Do tohto splitu sa už nedá pripojiť.');
+      }
+      const participantsSnap = await tx.get(this.participantsRef(splitId));
+      const existing = participantsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as LoadedParticipant[];
+      if (firebaseUid && existing.some((p) => p.userUid === firebaseUid)) {
+        throw new BadRequestException('Tento používateľ je už v splite pripojený.');
+      }
+      if (!legacy) {
+        const cap = Math.min(
+          10,
+          Math.max(2, (data.targetParticipantCount as number) || existing.length + 1),
+        );
+        if (existing.length >= cap) {
+          throw new BadRequestException('Kapacita splitu je naplnená.');
+        }
+      }
+      tx.set(this.participantsRef(splitId).doc(pid), {
+        displayName: dto.displayName.trim(),
+        userUid: firebaseUid ?? null,
+        iban: null,
+        secretTokenHash: hashToken(secret),
+        createdAt: now,
+        markedPaidAt: null,
+        claimedAmountCents: null,
+        adjustmentCents: 0,
+      });
+      tx.update(ref, { updatedAt: now });
     });
-
-    await ref.update({ updatedAt: now });
 
     await this.addActivity(splitId, {
       type: 'participant_joined',

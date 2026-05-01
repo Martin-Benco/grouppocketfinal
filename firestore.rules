@@ -2,9 +2,50 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection - users can read and write only their own document
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function allowedUserFields() {
+      return [
+        "fullName",
+        "phoneNumber",
+        "residence",
+        "iban",
+        "profileImageUrl",
+        "updatedAt",
+        "createdAt"
+      ];
+    }
+
+    function validStringOrNull(field, maxLen) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || (
+          request.resource.data[field] is string
+          && request.resource.data[field].size() <= maxLen
+        );
+    }
+
+    function validUserProfileShape() {
+      return validStringOrNull("fullName", 120)
+        && validStringOrNull("phoneNumber", 32)
+        && validStringOrNull("residence", 80)
+        && validStringOrNull("iban", 40)
+        && validStringOrNull("profileImageUrl", 2048)
+        && (!("updatedAt" in request.resource.data) || request.resource.data.updatedAt is string)
+        && (!("createdAt" in request.resource.data) || request.resource.data.createdAt is string);
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(allowedUserFields())
+        && validUserProfileShape();
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(allowedUserFields())
+        && validUserProfileShape();
+      allow delete: if false;
     }
     
     // Deny everything else by default

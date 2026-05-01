@@ -1,14 +1,36 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { randomBytes, randomUUID } from 'crypto';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { FirebaseService } from '../firebase/firebase.service';
-import { AddPocketTransactionDto } from './dto/add-transaction.dto';
-import { CreatePocketDto, CreatePocketTransactionInput } from './dto/create-pocket.dto';
-import { UpdatePocketDto } from './dto/update-pocket.dto';
+import { CreatePocketDto } from './dto/create-pocket.dto';
+import { AddPocketTransactionDto } from './dto/add-pocket-transaction.dto';
 
 type AuthUser = {
   uid: string;
   email?: string | null;
   name?: string | null;
+};
+
+type PocketMemberStatus = 'accepted' | 'pending' | 'rejected';
+
+type PocketMember = {
+  uid: string;
+  email: string | null;
+  fullName: string | null;
+  profileImageUrl: string | null;
+  iban: string | null;
+  status: PocketMemberStatus;
+};
+
+type PocketTransaction = {
+  id: string;
+  name: string;
+  amount: number;
+  date: string;
+  payerUid: string;
+  tag: string | null;
+  note: string | null;
+  splitAssignedUids: string[];
+  createdAt: string;
 };
 
 @Injectable()
@@ -19,326 +41,576 @@ export class PocketsService {
     return this.firebase.getFirestore().collection('pockets');
   }
 
-  private txCol(pocketId: string) {
-    return this.pocketsCol().doc(pocketId).collection('transactions');
+  private async getUserProfile(uid: string, fallbackEmail?: string | null) {
+    const doc = await this.firebase.getFirestore().collection('users').doc(uid).get();
+    const data = doc.exists ? doc.data() || {} : {};
+    return {
+      uid,
+      email: (data.email as string) || fallbackEmail || null,
+      fullName: (data.fullName as string) || null,
+      profileImageUrl: (data.profileImageUrl as string) || null,
+      iban: (data.iban as string) || null,
+    };
   }
 
-  private activitiesCol(pocketId: string) {
-    return this.pocketsCol().doc(pocketId).collection('activities');
+  private normalizeTags(tags?: string[]) {
+    return Array.from(new Set((tags || []).map((tag) => tag.trim()).filter(Boolean))).slice(0, 20);
   }
 
-  private normalizeTags(tags: string[] | undefined): string[] {
-    return Array.from(
-      new Set((tags || []).map((x) => x.trim()).filter(Boolean).slice(0, 20)),
-    );
-  }
-
-  private async assertMember(pocketId: string, uid: string) {
+  private async readPocketOrThrow(pocketId: string) {
     const ref = this.pocketsCol().doc(pocketId);
     const snap = await ref.get();
-    if (!snap.exists) throw new NotFoundException('Pocket neexistuje');
-    const data = snap.data()!;
-    const memberUids = (data.memberUids as string[]) || [];
-    if (!memberUids.includes(uid)) {
-      throw new ForbiddenException('Do tohto pocketu nemáš prístup');
+    if (!snap.exists) {
+      throw new NotFoundException('Pocket neexistuje');
     }
-    return { ref, data };
+    return { ref, data: snap.data() as Record<string, unknown> };
   }
 
-  private toDateOnly(input: string | undefined) {
-    if (!input) return new Date().toISOString().slice(0, 10);
-    return input.slice(0, 10);
+  private normalizeTransactions(input: unknown): PocketTransaction[] {
+    if (!Array.isArray(input)) return [];
+    return input
+      .map((item) => item as Partial<PocketTransaction>)
+      .filter((t) => Boolean(t?.id && t?.name && typeof t?.amount === 'number'))
+      .map((t) => ({
+        id: String(t.id),
+        name: String(t.name),
+        amount: Number(t.amount) || 0,
+        date: String(t.date || ''),
+        payerUid: String(t.payerUid || ''),
+        tag: t.tag ? String(t.tag) : null,
+        note: t.note ? String(t.note) : null,
+        splitAssignedUids: Array.isArray(t.splitAssignedUids)
+          ? t.splitAssignedUids.map((uid) => String(uid)).filter(Boolean)
+          : [],
+        createdAt: String(t.createdAt || ''),
+      }));
   }
 
-  private async getUserPublic(uid: string) {
-    const userDoc = await this.firebase.getFirestore().collection('users').doc(uid).get();
-    if (!userDoc.exists) return null;
-    const d = userDoc.data() || {};
-    return {
-      fullName: (d.fullName as string) || null,
-      email: (d.email as string) || null,
-      profileImageUrl: (d.profileImageUrl as string) || null,
-    };
-  }
-
-  private async hydrateMembers(membersRaw: Array<Record<string, unknown>>) {
-    const members = await Promise.all(
-      membersRaw.map(async (m) => {
-        const uid = (m.uid as string | null) || null;
-        if (!uid) {
-          return {
-            uid: null,
-            displayName: (m.displayName as string) || 'Používateľ',
-            email: (m.email as string) || null,
-            profileImageUrl: (m.profileImageUrl as string) || null,
-            joinedAt: (m.joinedAt as string) || null,
-          };
-        }
-        const u = await this.getUserPublic(uid);
-        return {
-          uid,
-          displayName: u?.fullName || (m.displayName as string) || 'Používateľ',
-          email: u?.email || (m.email as string) || null,
-          profileImageUrl: u?.profileImageUrl || (m.profileImageUrl as string) || null,
-          joinedAt: (m.joinedAt as string) || null,
-        };
-      }),
-    );
-    return members;
-  }
-
-  private async addActivity(
-    pocketId: string,
-    type:
-      | 'pocket_created'
-      | 'transaction_added'
-      | 'member_invited_email'
-      | 'settings_updated'
-      | 'member_left',
-    actorUid: string | null,
-    meta: Record<string, unknown> = {},
+  private findMemberIndex(
+    members: PocketMember[],
+    uid: string,
+    email?: string | null,
   ) {
-    const now = new Date().toISOString();
-    let actorDisplayName: string | null = null;
-    if (actorUid) {
-      const u = await this.getUserPublic(actorUid);
-      actorDisplayName = u?.fullName || u?.email || null;
-    }
-    await this.activitiesCol(pocketId).add({
-      type,
-      actorUid,
-      actorDisplayName,
-      meta,
-      createdAt: now,
-    });
-  }
-
-  async listActivities(pocketId: string, uid: string) {
-    await this.assertMember(pocketId, uid);
-    const snap = await this.activitiesCol(pocketId).orderBy('createdAt', 'desc').limit(50).get();
-    return {
-      activities: snap.docs.map((d) => {
-        const x = d.data();
-        return {
-          id: d.id,
-          type: (x.type as string) || 'unknown',
-          actorUid: (x.actorUid as string | null) || null,
-          actorDisplayName: (x.actorDisplayName as string | null) || null,
-          meta: (x.meta as Record<string, unknown>) || {},
-          createdAt: (x.createdAt as string) || null,
-        };
-      }),
-    };
-  }
-
-  private async writeTransaction(
-    pocketId: string,
-    byUid: string,
-    body: CreatePocketTransactionInput | AddPocketTransactionDto,
-  ) {
-    const now = new Date().toISOString();
-    const txId = randomUUID();
-    const txRef = this.txCol(pocketId).doc(txId);
-    await txRef.set({
-      name: body.name.trim(),
-      amountCents: body.amountCents,
-      tag: body.tag?.trim() || null,
-      splitMethod: body.splitMethod?.trim() || 'rovnako',
-      paidByUid: body.paidByUid?.trim() || byUid,
-      transactionDate: this.toDateOnly(body.transactionDate),
-      createdAt: now,
-      updatedAt: now,
-      createdByUid: byUid,
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    return members.findIndex((member) => {
+      if (member.uid === uid) return true;
+      const memberEmail = (member.email || '').trim().toLowerCase();
+      return Boolean(normalizedEmail && memberEmail && memberEmail === normalizedEmail);
     });
   }
 
   async create(dto: CreatePocketDto, user: AuthUser) {
     const name = dto.name.trim();
-    if (!name) throw new BadRequestException('Názov pocketu je povinný');
+    if (!name) {
+      throw new NotFoundException('Názov pocketu je povinný');
+    }
 
-    const now = new Date().toISOString();
-    const pocketId = randomUUID();
-    const inviteKey = randomBytes(6).toString('hex').toUpperCase();
-    const tags = this.normalizeTags(dto.tags);
-    const ownerPublic = await this.getUserPublic(user.uid);
-    const ownerDisplayName =
-      ownerPublic?.fullName || user.name?.trim() || user.email?.split('@')[0] || 'Majiteľ';
-    const ownerEmail = ownerPublic?.email || user.email?.toLowerCase() || null;
-    const lowerInviteEmails = Array.from(
-      new Set((dto.inviteEmails || []).map((x) => x.trim().toLowerCase()).filter(Boolean)),
+    const creatorProfile = await this.getUserProfile(user.uid, user.email || null);
+    const invitedProfiles = await Promise.all(
+      Array.from(new Set((dto.invitedUserUids || []).filter((uid) => uid && uid !== user.uid))).map((uid) =>
+        this.getUserProfile(uid),
+      ),
     );
+
+    const members: PocketMember[] = [
+      {
+        ...creatorProfile,
+        fullName: creatorProfile.fullName || user.name || creatorProfile.email,
+        status: 'accepted',
+      },
+      ...invitedProfiles.map((profile) => ({
+        ...profile,
+        status: 'pending' as const,
+      })),
+    ];
+
+    const pocketId = randomUUID();
+    const now = new Date().toISOString();
 
     await this.pocketsCol().doc(pocketId).set({
       name,
-      ownerUid: user.uid,
+      tags: this.normalizeTags(dto.tags),
       createdAt: now,
       updatedAt: now,
-      inviteKey,
-      tags,
-      memberUids: [user.uid],
-      members: [
-        {
-          uid: user.uid,
-          displayName: ownerDisplayName,
-          email: ownerEmail,
-          profileImageUrl: ownerPublic?.profileImageUrl || null,
-          joinedAt: now,
-        },
-      ],
-      invitedEmails: lowerInviteEmails,
+      ownerUid: user.uid,
+      members,
     });
 
-    await this.addActivity(pocketId, 'pocket_created', user.uid, { name });
+    return { pocketId };
+  }
 
-    for (const item of dto.initialTransactions || []) {
-      await this.writeTransaction(pocketId, user.uid, item);
-      await this.addActivity(pocketId, 'transaction_added', user.uid, {
-        name: item.name.trim(),
-        amountCents: item.amountCents,
-      });
+  async listForUser(uid: string) {
+    let requesterEmail: string | null = null;
+    try {
+      const authUser = await this.firebase.getAuth().getUser(uid);
+      requesterEmail = authUser.email || null;
+    } catch {
+      requesterEmail = null;
     }
 
-    return {
-      pocketId,
-      inviteKey,
-    };
+    const snap = await this.pocketsCol().get();
+    const accepted: Array<Record<string, unknown>> = [];
+    const pending: Array<Record<string, unknown>> = [];
+
+    snap.docs.forEach((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      const members = ((data.members as PocketMember[]) || []);
+      const memberIndex = this.findMemberIndex(members, uid, requesterEmail);
+      const member = memberIndex >= 0 ? members[memberIndex] : null;
+      if (!member) return;
+
+      const row = {
+        id: doc.id,
+        name: (data.name as string) || 'Pocket',
+        tags: ((data.tags as string[]) || []).slice(0, 10),
+        ownerUid: (data.ownerUid as string) || null,
+        updatedAt: (data.updatedAt as string) || '',
+        members,
+      };
+
+      if (member.status === 'accepted') accepted.push(row);
+      if (member.status === 'pending') pending.push(row);
+    });
+
+    accepted.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    pending.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+
+    return { accepted, pending };
   }
 
-  async listMine(uid: string) {
-    const snap = await this.pocketsCol().where('memberUids', 'array-contains', uid).limit(100).get();
-    const rows = await Promise.all(
-      snap.docs.map(async (doc) => {
-        const d = doc.data();
-        const txSnap = await this.txCol(doc.id).get();
-        let totalCents = 0;
-        for (const tx of txSnap.docs) {
-          totalCents += (tx.get('amountCents') as number) || 0;
-        }
-        const paidCents = 0;
-        return {
-          id: doc.id,
-          name: (d.name as string) || 'Pocket',
-          tags: ((d.tags as string[]) || []).slice(0, 5),
-          memberCount: ((d.memberUids as string[]) || []).length,
-          totalCents,
-          paidCents,
-          updatedAt: (d.updatedAt as string) || '',
-        };
+  async respondToInvite(pocketId: string, uid: string, status: 'accepted' | 'rejected') {
+    const { ref, data } = await this.readPocketOrThrow(pocketId);
+    const members = ((data.members as PocketMember[]) || []);
+
+    let requesterEmail: string | null = null;
+    try {
+      const authUser = await this.firebase.getAuth().getUser(uid);
+      requesterEmail = authUser.email || null;
+    } catch {
+      requesterEmail = null;
+    }
+
+    const targetIndex = this.findMemberIndex(members, uid, requesterEmail);
+    if (targetIndex < 0) {
+      throw new ForbiddenException('Nemáš prístup k tejto pozvánke');
+    }
+
+    const updatedMembers = members.map((member, idx) =>
+      idx === targetIndex
+        ? {
+            ...member,
+            uid, // zjednotiť člena na aktuálneho používateľa
+            email: member.email || requesterEmail || null,
+            status,
+          }
+        : member,
+    );
+
+    await ref.update({
+      members: updatedMembers,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return { success: true };
+  }
+
+  async inviteByEmailForUser(pocketId: string, requesterUid: string, email: string) {
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new NotFoundException('E-mail je povinný');
+    }
+
+    const { ref, data } = await this.readPocketOrThrow(pocketId);
+    const members = ((data.members as PocketMember[]) || []);
+    const acceptedMembers = members.filter((member) => member.status === 'accepted');
+    if (!acceptedMembers.some((member) => member.uid === requesterUid)) {
+      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+    }
+
+    const existingByEmail = members.find(
+      (member) => (member.email || '').trim().toLowerCase() === normalizedEmail,
+    );
+    if (existingByEmail?.status === 'accepted') {
+      throw new NotFoundException('Používateľ už je členom pocketu');
+    }
+    if (existingByEmail?.status === 'pending') {
+      throw new NotFoundException('Používateľ už má aktívnu pozvánku');
+    }
+
+    const userSnap = await this.firebase
+      .getFirestore()
+      .collection('users')
+      .where('email', '==', normalizedEmail)
+      .limit(1)
+      .get();
+    if (userSnap.empty) {
+      throw new NotFoundException('Používateľ s týmto e-mailom neexistuje');
+    }
+    const target = userSnap.docs[0];
+    const targetUid = target.id;
+    const targetProfile = await this.getUserProfile(targetUid, normalizedEmail);
+
+    const existingByUidIdx = members.findIndex((member) => member.uid === targetUid);
+    const nextMembers =
+      existingByUidIdx >= 0
+        ? members.map((member, idx) =>
+            idx === existingByUidIdx
+              ? {
+                  ...member,
+                  ...targetProfile,
+                  status: 'pending' as const,
+                }
+              : member,
+          )
+        : [
+            ...members,
+            {
+              ...targetProfile,
+              status: 'pending' as const,
+            },
+          ];
+
+    await ref.update({
+      members: nextMembers,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return { success: true };
+  }
+
+  async inviteByUidForUser(pocketId: string, requesterUid: string, userUid: string) {
+    const targetUid = (userUid || '').trim();
+    if (!targetUid) {
+      throw new NotFoundException('Používateľ je povinný');
+    }
+
+    const { ref, data } = await this.readPocketOrThrow(pocketId);
+    const members = ((data.members as PocketMember[]) || []);
+    const acceptedMembers = members.filter((member) => member.status === 'accepted');
+    if (!acceptedMembers.some((member) => member.uid === requesterUid)) {
+      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+    }
+    if (targetUid === requesterUid) {
+      throw new NotFoundException('Nemôžeš pozvať seba');
+    }
+
+    const existingByUid = members.find((member) => member.uid === targetUid);
+    if (existingByUid?.status === 'accepted') {
+      throw new NotFoundException('Používateľ už je členom pocketu');
+    }
+    if (existingByUid?.status === 'pending') {
+      throw new NotFoundException('Používateľ už má aktívnu pozvánku');
+    }
+
+    const targetProfile = await this.getUserProfile(targetUid);
+    if (!targetProfile.uid) {
+      throw new NotFoundException('Používateľ neexistuje');
+    }
+
+    const existingByUidIdx = members.findIndex((member) => member.uid === targetUid);
+    const nextMembers =
+      existingByUidIdx >= 0
+        ? members.map((member, idx) =>
+            idx === existingByUidIdx
+              ? {
+                  ...member,
+                  ...targetProfile,
+                  status: 'pending' as const,
+                }
+              : member,
+          )
+        : [
+            ...members,
+            {
+              ...targetProfile,
+              status: 'pending' as const,
+            },
+          ];
+
+    await ref.update({
+      members: nextMembers,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return { success: true };
+  }
+
+  async getOneForUser(pocketId: string, uid: string) {
+    const { data } = await this.readPocketOrThrow(pocketId);
+    const members = ((data.members as PocketMember[]) || []);
+    const hydratedProfiles = await Promise.all(
+      members.map(async (member) => {
+        const profile = await this.getUserProfile(member.uid, member.email);
+        return [member.uid, profile] as const;
       }),
     );
-    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return { pockets: rows };
-  }
+    const profilesByUid = new Map(hydratedProfiles);
+    const hydratedMembers = members.map((member) => {
+      const profile = profilesByUid.get(member.uid);
+      if (!profile) return member;
+      return {
+        ...member,
+        email: profile.email || member.email || null,
+        fullName: profile.fullName || member.fullName || null,
+        profileImageUrl: profile.profileImageUrl || member.profileImageUrl || null,
+        iban: profile.iban || member.iban || null,
+      };
+    });
 
-  async getOne(pocketId: string, uid: string) {
-    const { data } = await this.assertMember(pocketId, uid);
-    const txSnap = await this.txCol(pocketId).orderBy('transactionDate', 'desc').limit(200).get();
-    const transactions = txSnap.docs.map((d) => ({
-      id: d.id,
-      name: d.get('name') as string,
-      amountCents: (d.get('amountCents') as number) || 0,
-      tag: (d.get('tag') as string | null) || null,
-      splitMethod: (d.get('splitMethod') as string | null) || 'rovnako',
-      paidByUid: (d.get('paidByUid') as string | null) || null,
-      transactionDate: (d.get('transactionDate') as string | null) || null,
-    }));
+    let requesterEmail: string | null = null;
+    try {
+      const authUser = await this.firebase.getAuth().getUser(uid);
+      requesterEmail = authUser.email || null;
+    } catch {
+      requesterEmail = null;
+    }
 
-    const totalCents = transactions.reduce((sum, t) => sum + t.amountCents, 0);
-    const paidCents = 0;
+    const memberIndex = this.findMemberIndex(hydratedMembers, uid, requesterEmail);
+    const member = memberIndex >= 0 ? hydratedMembers[memberIndex] : null;
 
-    const membersRaw = (data.members as Array<Record<string, unknown>>) || [];
-    const members = await this.hydrateMembers(membersRaw);
-    const activitiesBlock = await this.listActivities(pocketId, uid);
+    if (!member || member.status !== 'accepted') {
+      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+    }
+
+    const transactions = this.normalizeTransactions(data.transactions);
+    const totalAmount = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+    const paidAmount = transactions.reduce((sum, tx) => sum + tx.amount, 0);
 
     return {
       id: pocketId,
       name: (data.name as string) || 'Pocket',
-      tags: (data.tags as string[]) || [],
-      inviteKey: (data.inviteKey as string) || '',
+      tags: ((data.tags as string[]) || []).slice(0, 20),
       ownerUid: (data.ownerUid as string) || null,
-      members,
-      transactions,
-      activities: activitiesBlock.activities,
-      analytics: {
-        totalCents,
-        paidCents,
-        unpaidCents: Math.max(0, totalCents - paidCents),
-      },
+      members: hydratedMembers,
       updatedAt: (data.updatedAt as string) || '',
+      transactions,
+      analytics: {
+        totalAmount,
+        paidAmount,
+      },
     };
   }
 
-  async update(pocketId: string, uid: string, dto: UpdatePocketDto) {
-    const { ref, data } = await this.assertMember(pocketId, uid);
-    if ((data.ownerUid as string) !== uid) {
-      throw new ForbiddenException('Pocket môže upravovať iba majiteľ');
-    }
-    const updates: Record<string, unknown> = {
-      updatedAt: new Date().toISOString(),
-    };
-    if (dto.name !== undefined) {
-      const name = dto.name.trim();
-      if (!name) throw new BadRequestException('Názov pocketu je povinný');
-      updates.name = name;
-    }
-    if (dto.tags !== undefined) {
-      updates.tags = this.normalizeTags(dto.tags);
-    }
-    await ref.update(updates);
-    await this.addActivity(pocketId, 'settings_updated', uid, {
-      changedName: dto.name !== undefined,
-      changedTags: dto.tags !== undefined,
-    });
-    return { success: true };
-  }
-
-  async addTransaction(pocketId: string, uid: string, dto: AddPocketTransactionDto) {
-    const { ref } = await this.assertMember(pocketId, uid);
-    await this.writeTransaction(pocketId, uid, dto);
-    await ref.update({ updatedAt: new Date().toISOString() });
-    await this.addActivity(pocketId, 'transaction_added', uid, {
+  async addTransactionForUser(pocketId: string, uid: string, dto: AddPocketTransactionDto) {
+    const now = new Date().toISOString();
+    const transaction: PocketTransaction = {
+      id: randomUUID(),
       name: dto.name.trim(),
-      amountCents: dto.amountCents,
+      amount: Number(dto.amount),
+      date: dto.date,
+      payerUid: dto.payerUid,
       tag: dto.tag?.trim() || null,
+      note: dto.note?.trim() || null,
+      splitAssignedUids: Array.from(new Set((dto.splitAssignedUids || []).filter(Boolean))),
+      createdAt: now,
+    };
+    const ref = this.pocketsCol().doc(pocketId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new NotFoundException('Pocket neexistuje');
+      }
+      const data = snap.data() as Record<string, unknown>;
+      const members = ((data.members as PocketMember[]) || []);
+      const acceptedMembers = members.filter((member) => member.status === 'accepted');
+      if (!acceptedMembers.some((member) => member.uid === uid)) {
+        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      }
+      if (!Number.isFinite(transaction.amount) || transaction.amount <= 0) {
+        throw new NotFoundException('Neplatná suma transakcie');
+      }
+      if (!acceptedMembers.some((member) => member.uid === dto.payerUid)) {
+        throw new NotFoundException('Platiteľ nie je člen pocketu');
+      }
+      if (transaction.splitAssignedUids.length === 0) {
+        throw new NotFoundException('Vyber aspoň jedného človeka pre rozdelenie');
+      }
+      const allValid = transaction.splitAssignedUids.every((assignedUid) =>
+        acceptedMembers.some((member) => member.uid === assignedUid),
+      );
+      if (!allValid) {
+        throw new NotFoundException('Niektorí vybraní ľudia nie sú členmi pocketu');
+      }
+      const transactions = this.normalizeTransactions(data.transactions);
+      tx.update(ref, {
+        transactions: [transaction, ...transactions],
+        updatedAt: now,
+      });
     });
-    return this.getOne(pocketId, uid);
+    const fresh = await ref.get();
+    const updatedTransactions = this.normalizeTransactions((fresh.data() as Record<string, unknown> | undefined)?.transactions);
+    const totalAmount = updatedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+    const paidAmount = updatedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+    return {
+      transaction,
+      analytics: {
+        totalAmount,
+        paidAmount,
+      },
+    };
   }
 
-  async inviteByEmail(pocketId: string, uid: string, emailRaw: string) {
-    const { ref, data } = await this.assertMember(pocketId, uid);
-    if ((data.ownerUid as string) !== uid) {
-      throw new ForbiddenException('Pozývať môže iba majiteľ pocketu');
-    }
-
-    const email = emailRaw.trim().toLowerCase();
-    const invitedEmails = Array.from(
-      new Set(([...((data.invitedEmails as string[]) || []), email]).filter(Boolean)),
-    );
-
-    await ref.update({
-      invitedEmails,
-      updatedAt: new Date().toISOString(),
+  async updateTransactionForUser(
+    pocketId: string,
+    transactionId: string,
+    uid: string,
+    dto: {
+      name: string;
+      amount: number;
+      date: string;
+      payerUid: string;
+      tag?: string;
+      note?: string;
+      splitAssignedUids: string[];
+    },
+  ) {
+    const amount = Number(dto.amount);
+    const splitAssignedUids = Array.from(new Set((dto.splitAssignedUids || []).filter(Boolean)));
+    const now = new Date().toISOString();
+    const ref = this.pocketsCol().doc(pocketId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new NotFoundException('Pocket neexistuje');
+      }
+      const data = snap.data() as Record<string, unknown>;
+      const members = ((data.members as PocketMember[]) || []);
+      const acceptedMembers = members.filter((member) => member.status === 'accepted');
+      if (!acceptedMembers.some((member) => member.uid === uid)) {
+        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new NotFoundException('Neplatná suma transakcie');
+      }
+      if (!acceptedMembers.some((member) => member.uid === dto.payerUid)) {
+        throw new NotFoundException('Platiteľ nie je člen pocketu');
+      }
+      if (splitAssignedUids.length === 0) {
+        throw new NotFoundException('Vyber aspoň jedného človeka pre rozdelenie');
+      }
+      const allValid = splitAssignedUids.every((assignedUid) =>
+        acceptedMembers.some((member) => member.uid === assignedUid),
+      );
+      if (!allValid) {
+        throw new NotFoundException('Niektorí vybraní ľudia nie sú členmi pocketu');
+      }
+      const transactions = this.normalizeTransactions(data.transactions);
+      const idx = transactions.findIndex((t) => t.id === transactionId);
+      if (idx < 0) {
+        throw new NotFoundException('Transakcia neexistuje');
+      }
+      const existing = transactions[idx];
+      const updatedTransactions = [...transactions];
+      updatedTransactions[idx] = {
+        ...existing,
+        name: dto.name.trim(),
+        amount,
+        date: dto.date,
+        payerUid: dto.payerUid,
+        tag: dto.tag?.trim() || null,
+        note: dto.note?.trim() || null,
+        splitAssignedUids,
+      };
+      tx.update(ref, {
+        transactions: updatedTransactions,
+        updatedAt: now,
+      });
     });
-    await this.addActivity(pocketId, 'member_invited_email', uid, { email });
-    return { success: true, invitedEmails };
+    const fresh = await ref.get();
+    const updatedTransactions = this.normalizeTransactions((fresh.data() as Record<string, unknown> | undefined)?.transactions);
+    const updatedTx = updatedTransactions.find((row) => row.id === transactionId);
+    if (!updatedTx) {
+      throw new NotFoundException('Transakcia neexistuje');
+    }
+    const totalAmount = updatedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+    const paidAmount = updatedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+    return {
+      transaction: updatedTx,
+      analytics: {
+        totalAmount,
+        paidAmount,
+      },
+    };
   }
 
-  async leave(pocketId: string, uid: string) {
-    const { ref, data } = await this.assertMember(pocketId, uid);
-    if ((data.ownerUid as string) === uid) {
-      throw new BadRequestException('Majiteľ nemôže odísť z vlastného pocketu');
-    }
-
-    const memberUids = ((data.memberUids as string[]) || []).filter((x) => x !== uid);
-    const members = ((data.members as Array<Record<string, unknown>>) || []).filter(
-      (m) => (m.uid as string) !== uid,
-    );
-    await ref.update({
-      memberUids,
-      members,
-      updatedAt: new Date().toISOString(),
+  async deleteTransactionForUser(pocketId: string, transactionId: string, uid: string) {
+    const now = new Date().toISOString();
+    const ref = this.pocketsCol().doc(pocketId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new NotFoundException('Pocket neexistuje');
+      }
+      const data = snap.data() as Record<string, unknown>;
+      const members = ((data.members as PocketMember[]) || []);
+      const acceptedMembers = members.filter((member) => member.status === 'accepted');
+      if (!acceptedMembers.some((member) => member.uid === uid)) {
+        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      }
+      const transactions = this.normalizeTransactions(data.transactions);
+      const next = transactions.filter((t) => t.id !== transactionId);
+      if (next.length === transactions.length) {
+        throw new NotFoundException('Transakcia neexistuje');
+      }
+      tx.update(ref, {
+        transactions: next,
+        updatedAt: now,
+      });
     });
-    await this.addActivity(pocketId, 'member_left', uid, {});
+    const fresh = await ref.get();
+    const next = this.normalizeTransactions((fresh.data() as Record<string, unknown> | undefined)?.transactions);
+    const totalAmount = next.reduce((sum, tx) => sum + tx.amount, 0);
+    const paidAmount = next.reduce((sum, tx) => sum + tx.amount, 0);
+
+    return {
+      success: true,
+      analytics: {
+        totalAmount,
+        paidAmount,
+      },
+    };
+  }
+
+  async removeMemberForOwner(pocketId: string, requesterUid: string, memberUid: string) {
+    if (!memberUid) {
+      throw new NotFoundException('Tento účet nie je možné odstrániť');
+    }
+    const now = new Date().toISOString();
+    const ref = this.pocketsCol().doc(pocketId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new NotFoundException('Pocket neexistuje');
+      }
+      const data = snap.data() as Record<string, unknown>;
+      const ownerUid = (data.ownerUid as string) || null;
+      if (!ownerUid || ownerUid !== requesterUid) {
+        throw new ForbiddenException('Člena môže odstrániť iba tvorca pocketu');
+      }
+      if (memberUid === ownerUid) {
+        throw new NotFoundException('Tento účet nie je možné odstrániť');
+      }
+      const members = ((data.members as PocketMember[]) || []);
+      const nextMembers = members.filter((member) => member.uid !== memberUid);
+      if (nextMembers.length === members.length) {
+        throw new NotFoundException('Používateľ sa v pockete nenašiel');
+      }
+      const transactions = this.normalizeTransactions(data.transactions);
+      const nextTransactions = transactions
+        .filter((txRow) => txRow.payerUid !== memberUid)
+        .map((txRow) => ({
+          ...txRow,
+          splitAssignedUids: (txRow.splitAssignedUids || []).filter((id) => id !== memberUid),
+        }));
+      tx.update(ref, {
+        members: nextMembers,
+        transactions: nextTransactions,
+        updatedAt: now,
+      });
+    });
+
     return { success: true };
   }
 }

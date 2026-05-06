@@ -11,8 +11,26 @@ async function bootstrap() {
     transform: true,
   }));
 
+  const envOrigins = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const allowedOrigins = Array.from(
+    new Set([
+      ...envOrigins,
+      'https://grouppocket.com',
+      'https://www.grouppocket.com',
+      'http://localhost:3000',
+    ]),
+  );
+
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+      // Allow non-browser or same-origin requests without Origin header.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+    },
     credentials: true,
   });
 

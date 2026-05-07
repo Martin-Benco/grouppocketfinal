@@ -43,8 +43,8 @@ export class FirebaseService implements OnModuleInit {
       } catch (error: any) {
         this.initError =
           'Firebase service account not configured. ' +
-          'Vytvorte service-account.json v backend/ adresári alebo nastavte FIREBASE_SERVICE_ACCOUNT environment variable. ' +
-          `Chyba: ${error.message}`;
+          'Create service-account.json in backend/ directory or set FIREBASE_SERVICE_ACCOUNT environment variable. ' +
+          `Error: ${error.message}`;
         console.error(this.initError);
       }
     }
@@ -58,7 +58,7 @@ export class FirebaseService implements OnModuleInit {
     if (!this.firestore) {
       throw new ServiceUnavailableException(
         this.initError ||
-          'Firebase nie je inicializovaný. Skontrolujte backend/.env a service-account.json súbor.',
+          'Firebase is not initialized. Check backend/.env and service-account.json file.',
       );
     }
     return this.firestore;

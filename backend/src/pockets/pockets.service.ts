@@ -10,7 +10,7 @@ type AuthUser = {
   name?: string | null;
 };
 
-type PocketMemberStatus = 'accepted' | 'pending' | 'rejected';
+type PocketMemberStatus = 'accepted' | 'pending' | 'rejected' | 'cancelled';
 
 type PocketMember = {
   uid: string;
@@ -61,7 +61,7 @@ export class PocketsService {
     const ref = this.pocketsCol().doc(pocketId);
     const snap = await ref.get();
     if (!snap.exists) {
-      throw new NotFoundException('Pocket neexistuje');
+      throw new NotFoundException('Pocket does not exist');
     }
     return { ref, data: snap.data() as Record<string, unknown> };
   }
@@ -102,7 +102,7 @@ export class PocketsService {
   async create(dto: CreatePocketDto, user: AuthUser) {
     const name = dto.name.trim();
     if (!name) {
-      throw new NotFoundException('Názov pocketu je povinný');
+      throw new NotFoundException('Pocket name is required');
     }
 
     const creatorProfile = await this.getUserProfile(user.uid, user.email || null);
@@ -192,7 +192,7 @@ export class PocketsService {
 
     const targetIndex = this.findMemberIndex(members, uid, requesterEmail);
     if (targetIndex < 0) {
-      throw new ForbiddenException('Nemáš prístup k tejto pozvánke');
+      throw new ForbiddenException('You do not have access to this invite');
     }
 
     const updatedMembers = members.map((member, idx) =>
@@ -217,24 +217,24 @@ export class PocketsService {
   async inviteByEmailForUser(pocketId: string, requesterUid: string, email: string) {
     const normalizedEmail = (email || '').trim().toLowerCase();
     if (!normalizedEmail) {
-      throw new NotFoundException('E-mail je povinný');
+      throw new NotFoundException('Email is required');
     }
 
     const { ref, data } = await this.readPocketOrThrow(pocketId);
     const members = ((data.members as PocketMember[]) || []);
     const acceptedMembers = members.filter((member) => member.status === 'accepted');
     if (!acceptedMembers.some((member) => member.uid === requesterUid)) {
-      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      throw new ForbiddenException('You do not have access to this Pocket');
     }
 
     const existingByEmail = members.find(
       (member) => (member.email || '').trim().toLowerCase() === normalizedEmail,
     );
     if (existingByEmail?.status === 'accepted') {
-      throw new NotFoundException('Používateľ už je členom pocketu');
+      throw new NotFoundException('User is already a Pocket member');
     }
     if (existingByEmail?.status === 'pending') {
-      throw new NotFoundException('Používateľ už má aktívnu pozvánku');
+      throw new NotFoundException('User already has an active invite');
     }
 
     const userSnap = await this.firebase
@@ -244,7 +244,7 @@ export class PocketsService {
       .limit(1)
       .get();
     if (userSnap.empty) {
-      throw new NotFoundException('Používateľ s týmto e-mailom neexistuje');
+      throw new NotFoundException('User with this email does not exist');
     }
     const target = userSnap.docs[0];
     const targetUid = target.id;
@@ -281,30 +281,30 @@ export class PocketsService {
   async inviteByUidForUser(pocketId: string, requesterUid: string, userUid: string) {
     const targetUid = (userUid || '').trim();
     if (!targetUid) {
-      throw new NotFoundException('Používateľ je povinný');
+      throw new NotFoundException('User is required');
     }
 
     const { ref, data } = await this.readPocketOrThrow(pocketId);
     const members = ((data.members as PocketMember[]) || []);
     const acceptedMembers = members.filter((member) => member.status === 'accepted');
     if (!acceptedMembers.some((member) => member.uid === requesterUid)) {
-      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      throw new ForbiddenException('You do not have access to this Pocket');
     }
     if (targetUid === requesterUid) {
-      throw new NotFoundException('Nemôžeš pozvať seba');
+      throw new NotFoundException('You cannot invite yourself');
     }
 
     const existingByUid = members.find((member) => member.uid === targetUid);
     if (existingByUid?.status === 'accepted') {
-      throw new NotFoundException('Používateľ už je členom pocketu');
+      throw new NotFoundException('User is already a Pocket member');
     }
     if (existingByUid?.status === 'pending') {
-      throw new NotFoundException('Používateľ už má aktívnu pozvánku');
+      throw new NotFoundException('User already has an active invite');
     }
 
     const targetProfile = await this.getUserProfile(targetUid);
     if (!targetProfile.uid) {
-      throw new NotFoundException('Používateľ neexistuje');
+      throw new NotFoundException('User does not exist');
     }
 
     const existingByUidIdx = members.findIndex((member) => member.uid === targetUid);
@@ -356,6 +356,7 @@ export class PocketsService {
         iban: profile.iban || member.iban || null,
       };
     });
+    const visibleMembers = hydratedMembers.filter((member) => member.status !== 'cancelled');
 
     let requesterEmail: string | null = null;
     try {
@@ -365,11 +366,11 @@ export class PocketsService {
       requesterEmail = null;
     }
 
-    const memberIndex = this.findMemberIndex(hydratedMembers, uid, requesterEmail);
-    const member = memberIndex >= 0 ? hydratedMembers[memberIndex] : null;
+    const memberIndex = this.findMemberIndex(visibleMembers, uid, requesterEmail);
+    const member = memberIndex >= 0 ? visibleMembers[memberIndex] : null;
 
     if (!member || member.status !== 'accepted') {
-      throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+      throw new ForbiddenException('You do not have access to this Pocket');
     }
 
     const transactions = this.normalizeTransactions(data.transactions);
@@ -381,7 +382,7 @@ export class PocketsService {
       name: (data.name as string) || 'Pocket',
       tags: ((data.tags as string[]) || []).slice(0, 20),
       ownerUid: (data.ownerUid as string) || null,
-      members: hydratedMembers,
+      members: visibleMembers,
       updatedAt: (data.updatedAt as string) || '',
       transactions,
       analytics: {
@@ -413,23 +414,26 @@ export class PocketsService {
       const data = snap.data() as Record<string, unknown>;
       const members = ((data.members as PocketMember[]) || []);
       const acceptedMembers = members.filter((member) => member.status === 'accepted');
+      const activeMembers = members.filter(
+        (member) => member.status === 'accepted' || member.status === 'pending',
+      );
       if (!acceptedMembers.some((member) => member.uid === uid)) {
-        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+        throw new ForbiddenException('You do not have access to this Pocket');
       }
       if (!Number.isFinite(transaction.amount) || transaction.amount <= 0) {
-        throw new NotFoundException('Neplatná suma transakcie');
+        throw new NotFoundException('Invalid transaction amount');
       }
-      if (!acceptedMembers.some((member) => member.uid === dto.payerUid)) {
-        throw new NotFoundException('Platiteľ nie je člen pocketu');
+      if (!activeMembers.some((member) => member.uid === dto.payerUid)) {
+        throw new NotFoundException('Payer is not a Pocket member');
       }
       if (transaction.splitAssignedUids.length === 0) {
-        throw new NotFoundException('Vyber aspoň jedného človeka pre rozdelenie');
+        throw new NotFoundException('Select at least one person for split');
       }
       const allValid = transaction.splitAssignedUids.every((assignedUid) =>
-        acceptedMembers.some((member) => member.uid === assignedUid),
+        activeMembers.some((member) => member.uid === assignedUid),
       );
       if (!allValid) {
-        throw new NotFoundException('Niektorí vybraní ľudia nie sú členmi pocketu');
+        throw new NotFoundException('Some selected people are not Pocket members');
       }
       const transactions = this.normalizeTransactions(data.transactions);
       tx.update(ref, {
@@ -477,23 +481,26 @@ export class PocketsService {
       const data = snap.data() as Record<string, unknown>;
       const members = ((data.members as PocketMember[]) || []);
       const acceptedMembers = members.filter((member) => member.status === 'accepted');
+      const activeMembers = members.filter(
+        (member) => member.status === 'accepted' || member.status === 'pending',
+      );
       if (!acceptedMembers.some((member) => member.uid === uid)) {
-        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+        throw new ForbiddenException('You do not have access to this Pocket');
       }
       if (!Number.isFinite(amount) || amount <= 0) {
-        throw new NotFoundException('Neplatná suma transakcie');
+        throw new NotFoundException('Invalid transaction amount');
       }
-      if (!acceptedMembers.some((member) => member.uid === dto.payerUid)) {
-        throw new NotFoundException('Platiteľ nie je člen pocketu');
+      if (!activeMembers.some((member) => member.uid === dto.payerUid)) {
+        throw new NotFoundException('Payer is not a Pocket member');
       }
       if (splitAssignedUids.length === 0) {
-        throw new NotFoundException('Vyber aspoň jedného človeka pre rozdelenie');
+        throw new NotFoundException('Select at least one person for split');
       }
       const allValid = splitAssignedUids.every((assignedUid) =>
-        acceptedMembers.some((member) => member.uid === assignedUid),
+        activeMembers.some((member) => member.uid === assignedUid),
       );
       if (!allValid) {
-        throw new NotFoundException('Niektorí vybraní ľudia nie sú členmi pocketu');
+        throw new NotFoundException('Some selected people are not Pocket members');
       }
       const transactions = this.normalizeTransactions(data.transactions);
       const idx = transactions.findIndex((t) => t.id === transactionId);
@@ -547,7 +554,7 @@ export class PocketsService {
       const members = ((data.members as PocketMember[]) || []);
       const acceptedMembers = members.filter((member) => member.status === 'accepted');
       if (!acceptedMembers.some((member) => member.uid === uid)) {
-        throw new ForbiddenException('K tomuto pocketu nemáš prístup');
+        throw new ForbiddenException('You do not have access to this Pocket');
       }
       const transactions = this.normalizeTransactions(data.transactions);
       const next = transactions.filter((t) => t.id !== transactionId);
@@ -575,7 +582,7 @@ export class PocketsService {
 
   async removeMemberForOwner(pocketId: string, requesterUid: string, memberUid: string) {
     if (!memberUid) {
-      throw new NotFoundException('Tento účet nie je možné odstrániť');
+      throw new NotFoundException('This account cannot be removed');
     }
     const now = new Date().toISOString();
     const ref = this.pocketsCol().doc(pocketId);
@@ -587,16 +594,20 @@ export class PocketsService {
       const data = snap.data() as Record<string, unknown>;
       const ownerUid = (data.ownerUid as string) || null;
       if (!ownerUid || ownerUid !== requesterUid) {
-        throw new ForbiddenException('Člena môže odstrániť iba tvorca pocketu');
+        throw new ForbiddenException('Only Pocket creator can remove a member');
       }
       if (memberUid === ownerUid) {
-        throw new NotFoundException('Tento účet nie je možné odstrániť');
+        throw new NotFoundException('This account cannot be removed');
       }
       const members = ((data.members as PocketMember[]) || []);
-      const nextMembers = members.filter((member) => member.uid !== memberUid);
-      if (nextMembers.length === members.length) {
-        throw new NotFoundException('Používateľ sa v pockete nenašiel');
+      const memberToRemove = members.find((member) => member.uid === memberUid);
+      if (!memberToRemove) {
+        throw new NotFoundException('User was not found in this Pocket');
       }
+      if (memberToRemove.status === 'pending') {
+        throw new NotFoundException('Use invite cancellation for pending invites');
+      }
+      const nextMembers = members.filter((member) => member.uid !== memberUid);
       const transactions = this.normalizeTransactions(data.transactions);
       const nextTransactions = transactions
         .filter((txRow) => txRow.payerUid !== memberUid)
@@ -607,6 +618,51 @@ export class PocketsService {
       tx.update(ref, {
         members: nextMembers,
         transactions: nextTransactions,
+        updatedAt: now,
+      });
+    });
+
+    return { success: true };
+  }
+
+  async cancelInviteForOwner(pocketId: string, requesterUid: string, memberUid: string) {
+    if (!memberUid) {
+      throw new NotFoundException('Invite could not be found');
+    }
+    const now = new Date().toISOString();
+    const ref = this.pocketsCol().doc(pocketId);
+    await this.firebase.getFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new NotFoundException('Pocket neexistuje');
+      }
+      const data = snap.data() as Record<string, unknown>;
+      const ownerUid = (data.ownerUid as string) || null;
+      if (!ownerUid || ownerUid !== requesterUid) {
+        throw new ForbiddenException('Only Pocket creator can cancel an invite');
+      }
+      if (memberUid === ownerUid) {
+        throw new NotFoundException('Invite could not be found');
+      }
+      const members = ((data.members as PocketMember[]) || []);
+      const targetIndex = members.findIndex((member) => member.uid === memberUid);
+      if (targetIndex < 0) {
+        throw new NotFoundException('Invite could not be found');
+      }
+      const targetMember = members[targetIndex];
+      if (targetMember.status !== 'pending') {
+        throw new NotFoundException('This invite is no longer active');
+      }
+      const updatedMembers = members.map((member, idx) =>
+        idx === targetIndex
+          ? {
+              ...member,
+              status: 'cancelled' as const,
+            }
+          : member,
+      );
+      tx.update(ref, {
+        members: updatedMembers,
         updatedAt: now,
       });
     });

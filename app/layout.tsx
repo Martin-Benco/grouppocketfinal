@@ -12,7 +12,7 @@ const poppins = Poppins({
 
 export const metadata: Metadata = {
   title: "GroupPocket",
-  description: "Spravujte výdavky a rozdeľujte platby",
+  description: "Manage expenses and split payments",
   viewport: {
     width: "device-width",
     initialScale: 1,

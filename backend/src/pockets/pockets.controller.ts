@@ -91,4 +91,13 @@ export class PocketsController {
   ) {
     return this.pocketsService.removeMemberForOwner(id, req.user.uid, memberUid);
   }
+
+  @Patch(':id/members/:memberUid/cancel')
+  cancelInvite(
+    @Param('id') id: string,
+    @Param('memberUid') memberUid: string,
+    @Req() req: { user: { uid: string } },
+  ) {
+    return this.pocketsService.cancelInviteForOwner(id, req.user.uid, memberUid);
+  }
 }

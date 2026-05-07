@@ -13,7 +13,7 @@ type PocketMember = {
   fullName: string | null;
   profileImageUrl: string | null;
   iban?: string | null;
-  status: "accepted" | "pending" | "rejected";
+  status: "accepted" | "pending" | "rejected" | "cancelled";
 };
 
 type PocketDetail = {
@@ -161,7 +161,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
   useEffect(() => {
     const load = async () => {
       if (!pocketId) {
-        setError("Chýba ID pocketu.");
+        setError("Pocket ID is missing.");
         setLoading(false);
         return;
       }
@@ -172,7 +172,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
         const result = (await api.pockets.get(pocketId)) as PocketDetail;
         setPocket(result);
       } catch (err: any) {
-        setError(err.message || "Nepodarilo sa načítať pocket");
+        setError(err.message || "Failed to load Pocket");
       } finally {
         setLoading(false);
       }
@@ -238,7 +238,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
         setSearchResults(result.users || []);
       } catch (err: any) {
         setSearchResults([]);
-        setSearchError(err.message || "Nepodarilo sa vyhľadať používateľov");
+        setSearchError(err.message || "Failed to search users");
       } finally {
         setSearchLoading(false);
       }
@@ -312,7 +312,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -322,7 +322,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-screen-sm px-5 py-8">
           <div className="rounded-[28px] border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-300">
-            {error || "Pocket sa nepodarilo načítať."}
+            {error || "Failed to load Pocket."}
           </div>
         </div>
       </div>
@@ -341,7 +341,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
     .filter((member) => member.uid !== currentUid)
     .map((member) => ({
       uid: member.uid,
-      name: member.fullName || member.email || "Používateľ",
+      name: member.fullName || member.email || "User",
       amount: bilateralVsCurrent[member.uid] ?? 0,
     }))
     .filter((item) => item.amount < 0)
@@ -350,7 +350,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
     .filter((member) => member.uid !== currentUid)
     .map((member) => ({
       uid: member.uid,
-      name: member.fullName || member.email || "Používateľ",
+      name: member.fullName || member.email || "User",
       amount: bilateralVsCurrent[member.uid] ?? 0,
     }))
     .filter((item) => item.amount > 0);
@@ -448,7 +448,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
 
   const getMemberDisplayNameByUid = (uid: string) => {
     const member = acceptedMembers.find((m) => m.uid === uid);
-    return member?.fullName || member?.email || "Používateľ";
+    return member?.fullName || member?.email || "User";
   };
 
   const confirmPaymePaid = async () => {
@@ -457,13 +457,13 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
       setConfirmingPaymePayment(true);
       setPaymeConfirmError(null);
       await api.pockets.addTransaction(pocket.id, {
-        name: "Vyplatenie",
+        name: "Payout",
         amount: pendingPaymePayment.amount,
         date: buildTodayIsoDate(),
         payerUid: currentUid,
         splitAssignedUids: [pendingPaymePayment.uid],
-        tag: "Vyplatenie",
-        note: "Platba potvrdená cez Payme.",
+        tag: "Payout",
+        note: "Payment confirmed via Payme.",
       });
       const refreshed = (await api.pockets.getFresh(pocket.id)) as PocketDetail;
       setPocket(refreshed);
@@ -475,7 +475,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
         paymeConfirmFallbackRef.current = null;
       }
     } catch (err: any) {
-      setPaymeConfirmError(err.message || "Nepodarilo sa uložiť vyplatenie.");
+      setPaymeConfirmError(err.message || "Failed to save payout.");
     } finally {
       setConfirmingPaymePayment(false);
     }
@@ -489,7 +489,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
             type="button"
             onClick={() => router.replace("/pockety")}
             className="text-foreground"
-            aria-label="Späť na pockety"
+            aria-label="Back to Pockets"
           >
             <ChevronLeft className="h-6 w-6" />
           </button>
@@ -505,7 +505,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
           <div className="relative p-1 pr-8">
             <div className="flex items-end gap-4">
               <div className="flex-1 border-b border-white/10 pb-3.5 pr-6">
-                <p className="text-xs text-foreground/55">Suma ktorú ste všetci spolu zaplatili</p>
+                <p className="text-xs text-foreground/55">Total amount paid by everyone</p>
                 <p className="mt-2 text-3xl font-bold text-foreground">{formatCurrency(totalAmount || paidAmount)}</p>
               </div>
             </div>
@@ -513,27 +513,27 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               <div className="mt-1">
                 <p className="text-xl font-bold text-foreground">
                   {myNetTotal < 0
-                    ? `Dlžíš ${formatCurrency(Math.abs(myNetTotal))}`
+                    ? `You owe ${formatCurrency(Math.abs(myNetTotal))}`
                     : myNetTotal > 0
-                      ? `Dlžia ti ${formatCurrency(myNetTotal)}`
-                      : "Vyrovnané 0,00 €"}
+                      ? `You're owed ${formatCurrency(myNetTotal)}`
+                      : "Settled 0,00 €"}
                 </p>
                 {myDebts.length > 0 ? (
                   <div className="mt-1.5 text-xs text-foreground/65">
-                    <p>Komu dlžíš:</p>
+                    <p>You owe:</p>
                     <p className="mt-0.5">
                       {myDebts.map((item) => `${item.name} ${formatCurrency(item.amount)}`).join(" • ")}
                     </p>
                   </div>
                 ) : whoOwesMe.length > 0 ? (
                   <div className="mt-1.5 text-xs text-foreground/65">
-                    <p>Kto dlží tebe:</p>
+                    <p>Owed to you:</p>
                     <p className="mt-0.5">
                       {whoOwesMe.map((item) => `${item.name} ${formatCurrency(item.amount)}`).join(" • ")}
                     </p>
                   </div>
                 ) : (
-                  <p className="mt-1.5 text-xs text-foreground/65">Nikto nikomu nedlží.</p>
+                  <p className="mt-1.5 text-xs text-foreground/65">Nobody owes anyone.</p>
                 )}
               </div>
             </div>
@@ -541,12 +541,12 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               <div
                 className="w-full bg-emerald-300/80"
                 style={{ height: `${(1 - debtRatio) * 100}%` }}
-                title={`Vyplatené ${formatCurrency(groupSettledTotal)}`}
+                title={`Paid out ${formatCurrency(groupSettledTotal)}`}
               />
               <div
                 className="w-full bg-amber-300/80"
                 style={{ height: `${debtRatio * 100}%` }}
-                title={`Skupina dlží ${formatCurrency(groupDebtTotal)}`}
+                title={`Group owes ${formatCurrency(groupDebtTotal)}`}
               />
             </div>
           </div>
@@ -563,7 +563,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               className="inline-flex items-center gap-1.5 text-sm font-semibold text-[rgb(124,58,237)]"
             >
               <Plus className="h-3.5 w-3.5" />
-              Pridať
+              Add
             </button>
           </div>
 
@@ -578,9 +578,9 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
             <div className="rounded-2xl border border-white/10 bg-transparent px-6 py-10">
               <div className="flex flex-col items-center justify-center py-4 text-center">
                 <Receipt className="h-11 w-11 text-[#9CA3AF]" />
-                <p className="mt-4 text-base font-semibold text-foreground">Zatiaľ žiadne výdavky</p>
+                <p className="mt-4 text-base font-semibold text-foreground">No expenses yet</p>
                 <p className="mt-2 max-w-[240px] text-sm leading-6 text-muted-foreground">
-                  Keď pridáš prvú transakciu, zobrazí sa práve tu.
+                  Your first transaction will appear here.
                 </p>
               </div>
             </div>
@@ -598,9 +598,9 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
             >
               {visibleTransactions.map((tx, index) => {
                 const payer = acceptedMembers.find((member) => member.uid === tx.payerUid);
-                const payerName = payer?.fullName || payer?.email || "Používateľ";
+                const payerName = payer?.fullName || payer?.email || "User";
                 const payoutTargetUid = (tx.splitAssignedUids || [])[0] || "";
-                const payoutTargetName = payoutTargetUid ? getMemberDisplayNameByUid(payoutTargetUid) : "Používateľ";
+                const payoutTargetName = payoutTargetUid ? getMemberDisplayNameByUid(payoutTargetUid) : "User";
                 const payerLine = isPayoutTransaction(tx)
                   ? `${payerName} -> ${payoutTargetName}`
                   : payerName;
@@ -653,7 +653,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                 }
                 className="text-xs font-medium text-foreground/65 hover:text-foreground"
               >
-                Zobraziť všetko
+                Show all
               </button>
             </div>
           )}
@@ -662,7 +662,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
 
         <section className="mt-7 pb-8">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-foreground">Ľudia</h2>
+            <h2 className="text-xl font-bold text-foreground">People</h2>
             <button
               type="button"
               onClick={() => {
@@ -671,13 +671,13 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               className="inline-flex items-center gap-1.5 text-sm font-semibold text-[rgb(124,58,237)]"
             >
               <Plus className="h-3.5 w-3.5" />
-              Pridať
+              Add
             </button>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-white/10 bg-transparent">
             {pocket.members.map((member, index, arr) => {
-                const displayName = member.fullName || member.email || "Používateľ";
+                const displayName = member.fullName || member.email || "User";
                 const isSelf = currentUid === member.uid;
                 const relative = bilateralVsCurrent[member.uid] ?? 0;
                 const isPending = member.status === "pending";
@@ -717,7 +717,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                         <p className="truncate text-base font-semibold text-foreground">
                           {displayName}
                           {member.uid === pocket.ownerUid && (
-                            <span className="ml-1 inline-flex align-middle" aria-label="Tvorca pocketu">
+                            <span className="ml-1 inline-flex align-middle" aria-label="Pocket creator">
                               <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none">
                                 <path
                                   d="M10 1.8l2.25 4.56 5.03.73-3.64 3.55.86 5.01L10 13.29l-4.5 2.36.86-5.01L2.72 7.09l5.03-.73L10 1.8z"
@@ -735,7 +735,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {isPending
-                            ? "Pozvaný"
+                            ? "Invited"
                             : (pocketNetByMember[member.uid] ?? 0) > 0
                               ? `+${formatCurrency(pocketNetByMember[member.uid] ?? 0)}`
                               : (pocketNetByMember[member.uid] ?? 0) < 0
@@ -746,12 +746,12 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                     </div>
 
                     {isPending ? (
-                      <span className="ml-4 text-xs font-semibold text-foreground/65">Pozvaný</span>
+                      <span className="ml-4 text-xs font-semibold text-foreground/65">Invited</span>
                     ) : isSelf ? (
-                      <span className="ml-4 text-xs font-semibold text-foreground/70">Ty</span>
+                      <span className="ml-4 text-xs font-semibold text-foreground/70">You</span>
                     ) : relative > 0 ? (
                       <span className="ml-4 text-xs font-semibold text-foreground/80">
-                        {`Dlží ti ${formatCurrency(relative)}`}
+                        {`Owes you ${formatCurrency(relative)}`}
                       </span>
                     ) : (
                       <button
@@ -763,7 +763,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                             : "border-white/15 bg-white/[0.03] text-foreground/70"
                         }`}
                       >
-                        {relative < 0 ? `dlžíš ${formatCurrency(Math.abs(relative))}` : "vyrovnané"}
+                        {relative < 0 ? `you owe ${formatCurrency(Math.abs(relative))}` : "settled"}
                       </button>
                     )}
                   </div>
@@ -776,7 +776,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               onClick={() => void openPayoutModal()}
               className="mt-4 h-12 w-full rounded-xl bg-[rgb(124,58,237)] text-sm font-semibold text-white hover:bg-[rgb(109,40,217)]"
             >
-              Vyplatiť
+              Payout
             </button>
           )}
         </section>
@@ -793,12 +793,12 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               setSelectedMember(null);
               setMemberActionError(null);
             }}
-            aria-label="Zavrieť možnosti používateľa"
+            aria-label="Close user options"
           />
           <div className="relative w-full max-w-sm rounded-2xl border border-white/15 bg-[#151922] p-5 shadow-2xl">
-            <h4 className="text-lg font-bold text-foreground">Možnosti používateľa</h4>
+            <h4 className="text-lg font-bold text-foreground">User options</h4>
             <p className="mt-1 text-sm text-foreground/75">
-              {selectedMember.fullName || selectedMember.email || "Používateľ"}
+              {selectedMember.fullName || selectedMember.email || "User"}
             </p>
             {memberActionError && (
               <p className="mt-3 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
@@ -817,7 +817,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                 }}
                 disabled={memberActionLoading}
               >
-                Zrušiť
+                Cancel
               </button>
               <button
                 type="button"
@@ -827,19 +827,34 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                   try {
                     setMemberActionLoading(true);
                     setMemberActionError(null);
-                    await api.pockets.removeMember(pocket.id, selectedMember.uid);
+                    if (selectedMember.status === "pending") {
+                      await api.pockets.cancelInvite(pocket.id, selectedMember.uid);
+                    } else {
+                      await api.pockets.removeMember(pocket.id, selectedMember.uid);
+                    }
                     const result = (await api.pockets.get(pocketId)) as PocketDetail;
                     setPocket(result);
                     setMemberModalOpen(false);
                     setSelectedMember(null);
                   } catch (err: any) {
-                    setMemberActionError(err.message || "Používateľa sa nepodarilo odstrániť.");
+                    setMemberActionError(
+                      err.message ||
+                        (selectedMember.status === "pending"
+                          ? "Failed to cancel invite."
+                          : "Failed to remove user."),
+                    );
                   } finally {
                     setMemberActionLoading(false);
                   }
                 }}
               >
-                {memberActionLoading ? "Mažem..." : "Vymazať"}
+                {memberActionLoading
+                  ? selectedMember.status === "pending"
+                    ? "Cancelling..."
+                    : "Deleting..."
+                  : selectedMember.status === "pending"
+                    ? "Cancel invite"
+                    : "Delete"}
               </button>
             </div>
           </div>
@@ -856,7 +871,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
             type="button"
             className="absolute inset-0 bg-black/70 backdrop-blur-[2px]"
             onClick={closePayoutModal}
-            aria-label="Zavrieť vyplatenie"
+            aria-label="Close payout"
           />
           <div
             className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/15 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
@@ -873,8 +888,8 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
             }}
           >
             <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
-            <h4 className="text-lg font-bold text-foreground">Vyplatiť dlhy</h4>
-            <p className="mt-1 text-sm text-foreground/70">Vyber komu chceš poslať platbu cez Payme.</p>
+            <h4 className="text-lg font-bold text-foreground">Pay off debts</h4>
+            <p className="mt-1 text-sm text-foreground/70">Choose who you want to pay via Payme.</p>
             <div className="mt-4 h-[calc(56vh-120px)] space-y-2 overflow-y-auto pr-1">
               {payoutError && (
                 <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
@@ -915,7 +930,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                       type="button"
                       onClick={() => {
                         if (!paymeUrl) {
-                          setPayoutError(`Používateľ ${item.name} nemá vyplnený IBAN.`);
+                          setPayoutError(`User ${item.name} has no IBAN set.`);
                           return;
                         }
                         setPayoutError(null);
@@ -956,13 +971,13 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                       }}
                       className="ml-3 rounded-md border border-amber-300/40 bg-amber-400/90 px-3 py-1.5 text-xs font-semibold text-black"
                     >
-                      {`Vyplatiť ${formatCurrency(item.amount)}`}
+                      {`Pay ${formatCurrency(item.amount)}`}
                     </button>
                   </div>
                 );
               })}
               {myDebts.length === 0 && (
-                <p className="text-sm text-foreground/70">Nemáš žiadne dlhy na vyplatenie.</p>
+                <p className="text-sm text-foreground/70">You have no debts to pay off.</p>
               )}
             </div>
           </div>
@@ -983,12 +998,12 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                 paymeConfirmFallbackRef.current = null;
               }
             }}
-            aria-label="Zavrieť potvrdenie Payme"
+            aria-label="Close Payme confirmation"
           />
           <div className="relative w-full max-w-sm rounded-2xl border border-white/15 bg-[#151922] p-5 shadow-2xl">
-            <h4 className="text-lg font-bold text-foreground">Prebehla platba?</h4>
+            <h4 className="text-lg font-bold text-foreground">Was the payment completed?</h4>
             <p className="mt-2 text-sm text-foreground/75">
-              Potvrď, či si zaplatil(a) <span className="font-semibold text-foreground">{pendingPaymePayment.name}</span>{" "}
+              Confirm whether you paid <span className="font-semibold text-foreground">{pendingPaymePayment.name}</span>{" "}
               sumu <span className="font-semibold text-foreground">{formatCurrency(pendingPaymePayment.amount)}</span>.
             </p>
             {paymeConfirmError && (
@@ -1020,7 +1035,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                 onClick={() => void confirmPaymePaid()}
                 disabled={confirmingPaymePayment}
               >
-                {confirmingPaymePayment ? "Ukladám..." : "Áno, zaplatil(a) som"}
+                {confirmingPaymePayment ? "Saving..." : "Yes, I paid"}
               </button>
             </div>
           </div>
@@ -1036,7 +1051,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
           type="button"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={closeAddPeopleSheet}
-          aria-label="Zavrieť pridanie ľudí"
+          aria-label="Close add people"
         />
         <div
           className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
@@ -1053,8 +1068,8 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
           }}
         >
           <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
-          <h3 className="text-2xl font-bold text-foreground">Koho chceš pridať do pocketu?</h3>
-          <p className="mt-1 text-sm text-foreground/75">Vyhľadaj ľudí podľa e-mailu a pridaj ich do zoznamu členov pocketu.</p>
+          <h3 className="text-2xl font-bold text-foreground">Who do you want to add to this Pocket?</h3>
+          <p className="mt-1 text-sm text-foreground/75">Search people by email and add them to this Pocket.</p>
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="relative">
@@ -1062,21 +1077,21 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
               <input
                 type="text"
                 inputMode="email"
-                placeholder="Vyhľadaj podľa e-mailu"
+                placeholder="Search by email"
                 value={userSearchQuery}
                 onChange={(e) => setUserSearchQuery(e.target.value)}
                 className="h-12 w-full rounded-lg border border-white/20 bg-white/10 pl-12 pr-4 text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
-            {searchLoading && <p className="mt-3 text-sm text-foreground/70">Vyhľadávam používateľov...</p>}
+            {searchLoading && <p className="mt-3 text-sm text-foreground/70">Searching users...</p>}
             {searchError && <p className="mt-3 text-sm text-red-300">{searchError}</p>}
             {!searchLoading && !searchError && userSearchQuery.trim().length >= 2 && searchResults.length === 0 && (
-              <p className="mt-3 text-sm text-foreground/70">Nikoho sa nepodarilo nájsť.</p>
+              <p className="mt-3 text-sm text-foreground/70">No one found.</p>
             )}
             {searchResults.length > 0 && (
               <div className="mt-3 space-y-2">
                 {searchResults.map((result) => {
-                  const displayName = result.fullName || result.email || "Používateľ";
+                  const displayName = result.fullName || result.email || "User";
                   const normalizedEmail = (result.email || "").trim().toLowerCase();
                   const alreadyInPocket = pocket.members.some(
                     (member) =>
@@ -1112,14 +1127,14 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                             const refreshed = (await api.pockets.get(pocket.id)) as PocketDetail;
                             setPocket(refreshed);
                           } catch (err: any) {
-                            setSearchError(err.message || "Pozvánku sa nepodarilo odoslať.");
+                            setSearchError(err.message || "Failed to send invite.");
                           } finally {
                             setInviteLoadingUid(null);
                           }
                         }}
                         className="ml-3 inline-flex h-9 items-center rounded-full border border-white/20 px-3 text-sm font-semibold text-foreground/85 disabled:opacity-50"
                       >
-                        {alreadyInPocket ? "Pridaný" : inviteLoadingUid === result.uid ? "Posielam..." : "Pridať"}
+                        {alreadyInPocket ? "Added" : inviteLoadingUid === result.uid ? "Sending..." : "Add"}
                       </button>
                     </div>
                   );
@@ -1131,12 +1146,12 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
           <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-[rgb(196,181,253)]" />
-              <p className="text-sm font-semibold text-foreground">Ľudia v tomto pockete</p>
+              <p className="text-sm font-semibold text-foreground">People in this Pocket</p>
             </div>
             <div className="mt-3 space-y-2">
               {pocket.members
                 .map((member) => {
-                  const displayName = member.fullName || member.email || "Používateľ";
+                  const displayName = member.fullName || member.email || "User";
                   const isPending = member.status === "pending";
                   return (
                     <div
@@ -1159,13 +1174,13 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
                         </div>
                       </div>
                       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground/65">
-                        {member.uid === currentUid ? "Ty" : isPending ? "Pozvaný" : "Člen"}
+                        {member.uid === currentUid ? "You" : isPending ? "Invited" : "Member"}
                       </span>
                     </div>
                   );
                 })}
               {pocket.members.length === 0 && (
-                <p className="text-sm text-foreground/70">Zatiaľ tu nikto nie je.</p>
+                <p className="text-sm text-foreground/70">No one here yet.</p>
               )}
             </div>
           </div>

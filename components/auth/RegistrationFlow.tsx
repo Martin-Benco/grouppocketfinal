@@ -11,10 +11,10 @@ interface Country {
 }
 
 const countries: Country[] = [
-  { code: "+421", flag: "🇸🇰", name: "Slovensko" },
-  { code: "+420", flag: "🇨🇿", name: "Česko" },
-  { code: "+48", flag: "🇵🇱", name: "Poľsko" },
-  { code: "+44", flag: "🇬🇧", name: "Anglicko" },
+  { code: "+421", flag: "🇸🇰", name: "Slovakia" },
+  { code: "+420", flag: "🇨🇿", name: "Czechia" },
+  { code: "+48", flag: "🇵🇱", name: "Poland" },
+  { code: "+44", flag: "🇬🇧", name: "England" },
 ];
 
 interface RegistrationData {
@@ -41,7 +41,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
     phoneNumber: "",
     countryCode: "+421",
     countryFlag: "🇸🇰",
-    residence: "Slovensko",
+    residence: "Slovakia",
     fullName: initialName,
     iban: "",
   });
@@ -114,10 +114,10 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 <ChevronLeft className="w-6 h-6" />
               </button>
               <h1 className="text-3xl font-bold text-foreground mb-2">
-                Dovoláme sa?
+                Phone number
               </h1>
               <p className="text-foreground/80 mb-8">
-                Sem napíšte Vaše telefónne číslo, s ktorým sa chcete registrovať
+                Enter the phone number you want to register with.
               </p>
             </div>
             <div className="flex gap-3 w-full">
@@ -147,7 +147,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
               </div>
               <input
                 type="tel"
-                placeholder="Napíšte telefónne číslo"
+                placeholder="Enter phone number"
                 value={data.phoneNumber}
                 onChange={(e) => {
                   const value = e.target.value.replace(/\D/g, "");
@@ -162,7 +162,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 onClick={handleSkip}
                 className="text-foreground text-sm font-medium"
               >
-                Preskočiť
+                Skip
               </button>
             </div>
           </div>
@@ -178,10 +178,10 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 <ChevronLeft className="w-6 h-6" />
               </button>
               <h1 className="text-3xl font-bold text-foreground mb-2">
-                Bydlisko
+                Residence
               </h1>
               <p className="text-foreground/80 mb-8">
-                V akej krajine máte trvalý pobyt?
+                Which country is your permanent residence?
               </p>
             </div>
             <div className="relative">
@@ -190,12 +190,12 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 onChange={(e) => setData({ ...data, residence: e.target.value })}
                 className="w-full h-14 px-4 bg-white/10 border border-white/20 rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none pr-10 backdrop-blur-md"
               >
-                <option value="Slovensko">Slovensko</option>
-                <option value="Česko">Česko</option>
-                <option value="Poľsko">Poľsko</option>
-                <option value="Anglicko">Anglicko</option>
-                <option value="Rakúsko">Rakúsko</option>
-                <option value="Maďarsko">Maďarsko</option>
+                <option value="Slovensko">Slovakia</option>
+                <option value="Česko">Czechia</option>
+                <option value="Poľsko">Poland</option>
+                <option value="Anglicko">England</option>
+                <option value="Rakúsko">Austria</option>
+                <option value="Maďarsko">Hungary</option>
               </select>
               <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-foreground/60 rotate-[-90deg] pointer-events-none" />
             </div>
@@ -204,7 +204,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 onClick={handleSkip}
                 className="text-foreground text-sm font-medium"
               >
-                Preskočiť
+                Skip
               </button>
             </div>
           </div>
@@ -220,15 +220,15 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 <ChevronLeft className="w-6 h-6" />
               </button>
               <h1 className="text-3xl font-bold text-foreground mb-2">
-                Celé meno
+                Full name
               </h1>
               <p className="text-foreground/80 mb-8">
-                Sem napíšte Vaše meno ako na oficiálnych dokumentoch
+                Enter your name as shown on official documents.
               </p>
             </div>
             <input
               type="text"
-              placeholder="Meno a priezvisko"
+              placeholder="Full name"
               value={data.fullName}
               onChange={(e) => setData({ ...data, fullName: e.target.value })}
               className="w-full h-14 px-4 bg-white/10 border border-white/20 rounded-lg text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary backdrop-blur-md"
@@ -238,7 +238,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 onClick={handleSkip}
                 className="text-foreground text-sm font-medium"
               >
-                Preskočiť
+                Skip
               </button>
             </div>
           </div>
@@ -257,7 +257,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 IBAN
               </h1>
               <p className="text-foreground/80 mb-8">
-                Sem napíšte Vaše medzinárodné bankové číslo
+                Enter your international bank account number.
               </p>
             </div>
             <input
@@ -272,7 +272,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
                 onClick={handleSkip}
                 className="text-foreground text-sm font-medium"
               >
-                Preskočiť
+                Skip
               </button>
             </div>
           </div>
@@ -284,7 +284,7 @@ export function RegistrationFlow({ initialName = "", onComplete, onSkip, onNavig
             disabled={!canProceed()}
             className="w-full h-14 text-base font-bold bg-primary hover:bg-primary/90 rounded-full"
           >
-            {step === 4 ? "Registrovať" : "Pokračovať"}
+            {step === 4 ? "Register" : "Continue"}
           </Button>
         </div>
       </div>

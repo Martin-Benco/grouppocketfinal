@@ -11,7 +11,7 @@ export function PocketsEmptyState() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -29,19 +29,19 @@ export function PocketsEmptyState() {
           </div>
 
           <h1 className="mt-6 text-2xl font-bold text-foreground">
-            Zatiaľ nemáš žiadny pocket
+            You don't have any Pockets yet
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Vytvor si svoj prvý pocket a maj skupinové výdavky na jednom mieste
-            prehľadne a jednoducho.
+            Create your first Pocket and keep shared expenses in one place,
+            clear and simple.
           </p>
 
           <Button
             asChild
             className="mt-8 h-12 w-full rounded-xl bg-[rgb(124,58,237)] text-white text-sm font-semibold hover:bg-[rgb(109,40,217)]"
           >
-            <Link href="/pockety/new">Vytvoriť prvý pocket</Link>
+            <Link href="/pockety/new">Create your first Pocket</Link>
           </Button>
         </div>
       </div>

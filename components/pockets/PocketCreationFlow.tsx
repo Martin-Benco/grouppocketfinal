@@ -56,9 +56,9 @@ function Avatar({
 }
 
 const SUGGESTED_TAGS = [
-  "🏠 Ubytovanie",
-  "🍽️ Jedlo",
-  "🚗 Cesta",
+  "🏠 Accommodation",
+  "🍽️ Food",
+  "🚗 Travel",
 ] as const;
 
 export function PocketCreationFlow() {
@@ -79,15 +79,15 @@ export function PocketCreationFlow() {
   const [myProfileImageUrl, setMyProfileImageUrl] = useState<string | null>(null);
 
   const title = useMemo(() => {
-    if (step === 1) return "Ako sa bude volať pocket?";
-    if (step === 2) return "Aké tagy chceš pridať?";
-    return "Koho chceš pridať do pocketu?";
+    if (step === 1) return "What should this Pocket be called?";
+    if (step === 2) return "Which tags do you want to add?";
+    return "Who do you want to add to this Pocket?";
   }, [step]);
 
   const description = useMemo(() => {
-    if (step === 1) return "Zvoľ krátky a jasný názov, aby každý hneď vedel, o čo ide.";
-    if (step === 2) return "Tagy sa budú pridávať k transakciám, aby sa lepšie odlišilo, kam išli a na čo boli.";
-    return "Vyhľadaj ľudí podľa e-mailu a pridaj ich do zoznamu členov pocketu.";
+    if (step === 1) return "Choose a short, clear name so everyone instantly knows what it is.";
+    if (step === 2) return "Tags will be added to transactions so it's clear what they were for.";
+    return "Search people by email and add them to this Pocket.";
   }, [step]);
 
   const parseTags = (value: string) => {
@@ -169,7 +169,7 @@ export function PocketCreationFlow() {
         setSearchResults(result.users || []);
       } catch (error: any) {
         setSearchResults([]);
-        setSearchError(error.message || "Nepodarilo sa vyhľadať používateľov");
+        setSearchError(error.message || "Failed to search users");
       } finally {
         setSearchLoading(false);
       }
@@ -203,7 +203,7 @@ export function PocketCreationFlow() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -285,7 +285,7 @@ export function PocketCreationFlow() {
             <div className="mt-8 space-y-4">
               <input
                 type="text"
-                placeholder="Napr. Byt Bratislava alebo Summer Trip"
+                placeholder="E.g. Flat Bratislava or Summer Trip"
                 value={data.pocketName}
                 onChange={(e) =>
                   setData((prev) => ({ ...prev, pocketName: e.target.value }))
@@ -329,7 +329,7 @@ export function PocketCreationFlow() {
 
                   <input
                     type="text"
-                    placeholder={selectedSuggestedTags.length + completedTags.length === 0 ? "Tagy oddeľuj medzerou" : ""}
+                    placeholder={selectedSuggestedTags.length + completedTags.length === 0 ? "Separate tags with spaces" : ""}
                     value={draft}
                     onChange={(e) => rebuildTagInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -354,7 +354,7 @@ export function PocketCreationFlow() {
                   <input
                     type="text"
                     inputMode="email"
-                    placeholder="Vyhľadaj podľa e-mailu"
+                    placeholder="Search by email"
                     value={userSearchQuery}
                     onChange={(e) => setUserSearchQuery(e.target.value)}
                     className="h-14 w-full rounded-lg border border-white/20 bg-white/10 pl-12 pr-4 text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary"
@@ -362,7 +362,7 @@ export function PocketCreationFlow() {
                 </div>
 
                 {searchLoading && (
-                  <p className="mt-3 text-sm text-foreground/70">Vyhľadávam používateľov...</p>
+                  <p className="mt-3 text-sm text-foreground/70">Searching users...</p>
                 )}
 
                 {searchError && (
@@ -370,14 +370,14 @@ export function PocketCreationFlow() {
                 )}
 
                 {!searchLoading && !searchError && userSearchQuery.trim().length >= 2 && searchResults.length === 0 && (
-                  <p className="mt-3 text-sm text-foreground/70">Nikoho sa nepodarilo nájsť.</p>
+                  <p className="mt-3 text-sm text-foreground/70">No one found.</p>
                 )}
 
                 {searchResults.length > 0 && (
                   <div className="mt-4 space-y-3">
                     {searchResults.map((result) => {
                       const alreadyAdded = data.invitedUsers.some((user) => user.uid === result.uid);
-                      const displayName = result.fullName || result.email || "Používateľ";
+                      const displayName = result.fullName || result.email || "User";
 
                       return (
                         <div
@@ -396,7 +396,7 @@ export function PocketCreationFlow() {
                                 {displayName}
                               </p>
                               <p className="truncate text-xs text-foreground/65">
-                                {result.email || "Bez e-mailu"}
+                                {result.email || "No email"}
                               </p>
                             </div>
                           </div>
@@ -407,7 +407,7 @@ export function PocketCreationFlow() {
                             disabled={alreadyAdded}
                             className="ml-3 h-10 rounded-full px-4 text-sm font-semibold"
                           >
-                            {alreadyAdded ? "Pridaný" : "Pridať"}
+                            {alreadyAdded ? "Added" : "Add"}
                           </Button>
                         </div>
                       );
@@ -420,7 +420,7 @@ export function PocketCreationFlow() {
                 <div className="flex items-center gap-2">
                   <UserPlus className="h-5 w-5 text-[rgb(196,181,253)]" />
                   <p className="text-sm font-semibold text-foreground">
-                    Ľudia v tomto pockete
+                    People in this Pocket
                   </p>
                 </div>
 
@@ -429,26 +429,26 @@ export function PocketCreationFlow() {
                     <div className="flex min-w-0 items-center gap-3">
                       <Avatar
                         src={myProfileImageUrl || user.photoURL}
-                        name={user.displayName || user.email || "Ty"}
+                        name={user.displayName || user.email || "You"}
                         className="h-11 w-11 rounded-full object-cover"
                         fallbackClassName="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-foreground"
                       />
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">
-                          {user.displayName || user.email || "Ty"}
+                          {user.displayName || user.email || "You"}
                         </p>
                         <p className="truncate text-xs text-foreground/65">
-                          {user.email || "Tvoj účet"}
+                          {user.email || "Your account"}
                         </p>
                       </div>
                     </div>
                     <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(196,181,253)]">
-                      Ty
+                      You
                     </span>
                   </div>
 
                   {data.invitedUsers.map((invitedUser) => {
-                    const displayName = invitedUser.fullName || invitedUser.email || "Používateľ";
+                    const displayName = invitedUser.fullName || invitedUser.email || "User";
 
                     return (
                       <button
@@ -469,12 +469,12 @@ export function PocketCreationFlow() {
                               {displayName}
                             </p>
                             <p className="truncate text-xs text-foreground/65">
-                              {invitedUser.email || "Bez e-mailu"}
+                              {invitedUser.email || "No email"}
                             </p>
                           </div>
                         </div>
                         <span className="text-xs font-medium text-foreground/55">
-                          Odstrániť
+                          Remove
                         </span>
                       </button>
                     );
@@ -482,7 +482,7 @@ export function PocketCreationFlow() {
 
                   {data.invitedUsers.length === 0 && (
                     <p className="text-sm text-foreground/70">
-                      Zatiaľ si nepridal nikoho ďalšieho.
+                      You haven't added anyone else yet.
                     </p>
                   )}
                 </div>
@@ -503,7 +503,7 @@ export function PocketCreationFlow() {
             disabled={!canProceed}
             className="h-14 w-full rounded-full bg-primary text-base font-bold hover:bg-primary/90"
           >
-            {step === 3 ? "Vytvoriť pocket" : "Pokračovať"}
+            {step === 3 ? "Create Pocket" : "Continue"}
           </Button>
         </div>
       </div>

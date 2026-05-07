@@ -64,7 +64,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     return response.json();
   } catch (error: any) {
     if (error.message?.includes('Failed to fetch') || error.message?.includes('ERR_CONNECTION_REFUSED')) {
-      throw new Error('Backend server nie je spustený. Spustite ho pomocou: cd backend && npm run start:dev');
+      throw new Error('Backend server is not running. Start it with: cd backend && npm run start:dev');
     }
     throw error;
   }
@@ -167,7 +167,7 @@ async function fetchQuicksplit(path: string, options: RequestInit & QuickSplitRe
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : '';
     if (msg.includes('Failed to fetch') || msg.includes('ERR_CONNECTION_REFUSED')) {
-      throw new Error('Backend server nie je spustený. Spustite ho pomocou: cd backend && npm run start:dev');
+      throw new Error('Backend server is not running. Start it with: cd backend && npm run start:dev');
     }
     throw error;
   }
@@ -279,6 +279,13 @@ export const api = {
       invalidatePocketCache();
       return result;
     },
+    cancelInvite: async (pocketId: string, memberUid: string) => {
+      const result = await fetchWithAuth(`/pockets/${pocketId}/members/${encodeURIComponent(memberUid)}/cancel`, {
+        method: 'PATCH',
+      });
+      invalidatePocketCache();
+      return result;
+    },
     inviteByEmail: async (pocketId: string, email: string) =>
       fetchWithAuth(`/pockets/${pocketId}/invite/email`, {
         method: 'POST',
@@ -367,7 +374,7 @@ export const api = {
     updateParticipantPayment: (
       splitId: string,
       participantId: string,
-      body: { iban?: string | null },
+      body: { iban?: string | null; displayName?: string | null },
       h: QuickSplitRequestTokens,
     ) =>
       fetchQuicksplit(`/quicksplits/${splitId}/participants/${participantId}/payment`, {

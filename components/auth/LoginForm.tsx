@@ -54,7 +54,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
 
   const handleForgotPassword = async () => {
     if (!resetEmail) {
-      setResetMessage("Zadajte e-mail");
+      setResetMessage("Enter your email");
       return;
     }
 
@@ -62,9 +62,9 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
       setIsResetting(true);
       setResetMessage(null);
       await resetPassword(resetEmail);
-      setResetMessage("E-mail na obnovenie hesla bol odoslaný. Skontrolujte svoju schránku.");
+      setResetMessage("Password reset email sent. Check your inbox.");
     } catch (error: any) {
-      setResetMessage(error.message || "Chyba pri odosielaní e-mailu");
+      setResetMessage(error.message || "Failed to send email");
     } finally {
       setIsResetting(false);
     }
@@ -86,7 +86,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
         <div className="relative">
           <input
             type={showPassword ? "text" : "password"}
-            placeholder="Heslo"
+            placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -114,7 +114,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
               }}
               className="text-primary text-sm font-medium"
             >
-              Zabudol si heslo?
+              Forgot password?
             </button>
           </div>
         )}
@@ -127,17 +127,17 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
         className="w-full h-14 text-base font-bold bg-primary hover:bg-primary/90 rounded-full"
         disabled={isLoading}
       >
-        {isSignUp ? "Registrovať sa" : "Prihlásiť sa"}
+        {isSignUp ? "Sign up" : "Sign in"}
       </Button>
       {!isSignUp && (
         <div className="text-center text-sm text-foreground">
-          <span>Nemáš ešte účet? </span>
+          <span>Don&apos;t have an account yet? </span>
           <button
             type="button"
             onClick={() => handleSignUpToggle(true)}
             className="text-primary font-medium"
           >
-            Registrovať sa
+            Sign up
           </button>
         </div>
       )}
@@ -147,7 +147,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           onClick={() => handleSignUpToggle(false)}
           className="w-full text-center text-primary text-sm font-medium"
         >
-          Mám už účet
+          I already have an account
         </button>
       )}
 
@@ -158,11 +158,11 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           setResetEmail("");
           setResetMessage(null);
         }}
-        title="Obnoviť heslo"
+        title="Reset password"
       >
         <div className="space-y-4">
           <p className="text-foreground text-sm">
-            Zadajte svoj e-mail a pošleme vám odkaz na obnovenie hesla.
+            Enter your email and we&apos;ll send you a password reset link.
           </p>
           <input
             type="email"
@@ -173,7 +173,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           />
           {resetMessage && (
             <div className={`p-3 rounded-lg text-sm ${
-              resetMessage.includes("odoslaný") 
+              resetMessage.includes("sent") 
                 ? "bg-green-500/10 border border-green-500/20 text-green-500"
                 : "bg-red-500/10 border border-red-500/20 text-red-500"
             }`}>
@@ -185,7 +185,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
             disabled={isResetting || !resetEmail}
             className="w-full h-12 bg-primary hover:bg-primary/90"
           >
-            {isResetting ? "Odosielam..." : "Odoslať"}
+            {isResetting ? "Sending..." : "Send"}
           </Button>
         </div>
       </Modal>

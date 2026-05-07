@@ -244,7 +244,7 @@ export class QuicksplitsService {
     let q: Query = colRef.orderBy('createdAt', 'desc').limit(limit + 1);
     if (afterActivityId) {
       const afterDoc = await colRef.doc(afterActivityId).get();
-      if (!afterDoc.exists) throw new NotFoundException('Neplatný kurzor aktivít');
+      if (!afterDoc.exists) throw new NotFoundException('Invalid activity cursor');
       q = colRef.orderBy('createdAt', 'desc').startAfter(afterDoc).limit(limit + 1);
     }
     const snap = await q.get();
@@ -360,7 +360,7 @@ export class QuicksplitsService {
       payerParticipantId: payerId,
       participants: views,
       payerIban,
-      payerDisplayName: payer?.displayName || 'Platiteľ',
+      payerDisplayName: payer?.displayName || 'Payer',
       createdAt: data.createdAt as string,
       updatedAt: data.updatedAt as string,
       activities: activitiesBlock.items,
@@ -442,7 +442,7 @@ export class QuicksplitsService {
   private async getSplitDoc(splitId: string) {
     const ref = this.col().doc(splitId);
     const doc = await ref.get();
-    if (!doc.exists) throw new NotFoundException('QuickSplit nenájdený');
+    if (!doc.exists) throw new NotFoundException('QuickSplit not found');
     return { ref, data: doc.data()!, snap: doc };
   }
 
@@ -470,7 +470,7 @@ export class QuicksplitsService {
       const parts = await this.loadParticipants(splitId);
       if (parts.some((p) => p.userUid === opts.firebaseUid)) return;
     }
-    throw new ForbiddenException('Nedostatočné oprávnenie na zobrazenie');
+    throw new ForbiddenException('Insufficient permissions to view');
   }
 
   private async assertCanAdmin(
@@ -480,7 +480,7 @@ export class QuicksplitsService {
   ) {
     if (adminToken && this.verifyAdmin(data, adminToken)) return;
     if (firebaseUid && data.ownerUid === firebaseUid) return;
-    throw new ForbiddenException('Úpravy splitu: chýba admin token alebo vlastníctvo');
+    throw new ForbiddenException('Split updates require admin token or ownership');
   }
 
   private async assertParticipantSecret(
@@ -489,10 +489,10 @@ export class QuicksplitsService {
     secret: string | undefined,
   ) {
     const doc = await this.participantsRef(splitId).doc(participantId).get();
-    if (!doc.exists) throw new NotFoundException('Účastník nenájdený');
+    if (!doc.exists) throw new NotFoundException('Participant not found');
     const h = doc.get('secretTokenHash') as string;
     if (!secret || !timingSafeEqual(h, hashToken(secret))) {
-      throw new ForbiddenException('Neplatný účastnícky token');
+      throw new ForbiddenException('Invalid participant token');
     }
   }
 
@@ -510,7 +510,7 @@ export class QuicksplitsService {
   private validateParticipantIds(participants: LoadedParticipant[], ids: string[]) {
     const set = new Set(participants.map((p) => p.id));
     for (const id of ids) {
-      if (!set.has(id)) throw new BadRequestException(`Neplatný účastník: ${id}`);
+      if (!set.has(id)) throw new BadRequestException(`Invalid participant: ${id}`);
     }
   }
 
@@ -528,7 +528,7 @@ export class QuicksplitsService {
       }
       if (sum !== totalCents) {
         throw new BadRequestException(
-          `Súčet zadaných súm (${sum}) musí sedieť s celkom (${totalCents}) pred dokončením.`,
+          `Entered amounts total (${sum}) must match (${totalCents}) before finalization.`,
         );
       }
     }
@@ -536,16 +536,16 @@ export class QuicksplitsService {
       const items = this.normalizeSplitItemsFromDoc(data);
       let s = 0;
       for (const it of items) {
-        if (!it.name.trim()) throw new BadRequestException('Položka musí mať názov');
+        if (!it.name.trim()) throw new BadRequestException('Item name is required');
         if (it.consumerParticipantIds.length === 0) {
-          throw new BadRequestException(`Položka „${it.name}“: označ aspoň jedného konzumenta`);
+          throw new BadRequestException(`Item "${it.name}": select at least one consumer`);
         }
         this.validateParticipantIds(participants, it.consumerParticipantIds);
         s += it.amountCents;
       }
       if (s !== totalCents) {
         throw new BadRequestException(
-          `Súčet položiek (${s}) musí byť rovný celkovej sume účtu (${totalCents}).`,
+          `Items total (${s}) must equal bill total (${totalCents}).`,
         );
       }
     }
@@ -553,12 +553,12 @@ export class QuicksplitsService {
       const excluded = new Set((data.equalExcludedParticipantIds as string[]) || []);
       this.validateParticipantIds(participants, [...excluded]);
       if (participants.length < 3 && excluded.size > 0) {
-        throw new BadRequestException('Účastníkov je málo — vylúčenie je možné až od 3 ľudí.');
+        throw new BadRequestException('Too few participants - exclusion requires at least 3 people.');
       }
       const order = this.participantOrderIds(participants);
       const included = order.filter((id) => !excluded.has(id));
       if (included.length === 0) {
-        throw new BadRequestException('Aspôň jeden účastník musí byť zahrnutý do delenia.');
+        throw new BadRequestException('At least one participant must be included in split.');
       }
     }
   }
@@ -591,7 +591,7 @@ export class QuicksplitsService {
     const sumClaimed = this.customClaimsSum(participants);
     const R = totalCents - sumClaimed;
     if (R < 0) {
-      throw new BadRequestException('Súčet zadaných súm presahuje celkovú sumu účtu.');
+      throw new BadRequestException('Entered amounts exceed total bill amount.');
     }
     const shares = R === 0 ? Array(n).fill(0) : this.splitEqualShares(R, n);
     const batch = this.firebase.getFirestore().batch();
@@ -614,7 +614,7 @@ export class QuicksplitsService {
   ) {
     const mode = data.splitMode as string;
     if (mode !== 'custom_amounts') {
-      throw new BadRequestException('Manuálne priradenie zostatku platí len pre režim „Každý svoju sumu“.');
+      throw new BadRequestException('Manual remainder assignment is allowed only in "Everyone enters amount" mode.');
     }
     const participants = await this.loadParticipants(splitId);
     this.validateParticipantIds(
@@ -631,7 +631,7 @@ export class QuicksplitsService {
     const assignedSum = [...byId.values()].reduce((s, x) => s + x, 0);
     if (assignedSum !== targetRemainder) {
       throw new BadRequestException(
-        `Manuálne priradenie musí pokryť presný zostatok (${targetRemainder}).`,
+        `Manual assignment must cover exact remainder (${targetRemainder}).`,
       );
     }
     const batch = this.firebase.getFirestore().batch();
@@ -671,16 +671,16 @@ export class QuicksplitsService {
     if (dto.targetParticipantCount !== undefined) {
       const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
       if (fs !== 'waiting') {
-        throw new BadRequestException('Počet ľudí sa dá meniť len počas čakania na členov.');
+        throw new BadRequestException('People count can be changed only while waiting for members.');
       }
       if (dto.targetParticipantCount < partsBefore.length) {
-        throw new BadRequestException('Počet ľudí nemôže byť menší než aktuálne pripojení členovia.');
+        throw new BadRequestException('People count cannot be lower than currently joined members.');
       }
       updates.targetParticipantCount = dto.targetParticipantCount;
     }
     if (dto.payerParticipantId !== undefined) {
       if (!partsBefore.some((p) => p.id === dto.payerParticipantId)) {
-        throw new BadRequestException('Neplatný platiteľ');
+        throw new BadRequestException('Invalid payer');
       }
       updates.payerParticipantId = dto.payerParticipantId;
     }
@@ -688,7 +688,7 @@ export class QuicksplitsService {
     if (dto.splitMode !== undefined) {
       const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
       if (fs !== 'splitting') {
-        throw new BadRequestException('Režim delenia sa dá meniť len v kroku delenia.');
+        throw new BadRequestException('Split mode can be changed only in split step.');
       }
       updates.splitMode = dto.splitMode;
     }
@@ -696,10 +696,10 @@ export class QuicksplitsService {
     if (dto.equalExcludedParticipantIds !== undefined) {
       const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
       if (fs !== 'splitting') {
-        throw new BadRequestException('Vylúčenia sa dajú meniť len v kroku delenia.');
+        throw new BadRequestException('Exclusions can be changed only in split step.');
       }
       if (partsBefore.length < 3 && dto.equalExcludedParticipantIds.length > 0) {
-        throw new BadRequestException('Účastníkov je málo — vylúčenie je možné až od 3 ľudí.');
+        throw new BadRequestException('Too few participants - exclusion requires at least 3 people.');
       }
       updates.equalExcludedParticipantIds = dto.equalExcludedParticipantIds;
     }
@@ -707,7 +707,7 @@ export class QuicksplitsService {
     if (dto.splitItems !== undefined) {
       const fs = this.normalizeFlowStep({ ...data, ...updates } as DocumentData);
       if (fs !== 'splitting') {
-        throw new BadRequestException('Položky sa dajú meniť len v kroku delenia.');
+        throw new BadRequestException('Items can be changed only in split step.');
       }
       updates.splitItems = this.normalizeIncomingItems(dto.splitItems, partsBefore);
     }
@@ -716,10 +716,10 @@ export class QuicksplitsService {
       const merged = { ...data, ...updates } as DocumentData;
       const fs = this.normalizeFlowStep(merged);
       if (fs !== 'splitting') {
-        throw new BadRequestException('Vlastné sumy sa dajú meniť len v kroku delenia.');
+        throw new BadRequestException('Custom amounts can be changed only in split step.');
       }
       if ((merged.splitMode as string) !== 'custom_amounts') {
-        throw new BadRequestException('Vlastné sumy sa dajú meniť len v režime „Každý svoju sumu“.');
+        throw new BadRequestException('Custom amounts can be changed only in "Everyone enters amount" mode.');
       }
       this.validateParticipantIds(
         partsBefore,
@@ -745,14 +745,28 @@ export class QuicksplitsService {
       } else if (dto.flowStep === 'settlement' && flowStepBefore === 'splitting') {
         const mergedData = { ...data, ...updates } as DocumentData;
         const mode = (mergedData.splitMode as string) || null;
-        if (!mode) throw new BadRequestException('Pred dokončením vyber spôsob delenia.');
+        if (!mode) throw new BadRequestException('Select split mode before finalization.');
         const participants = await this.loadParticipants(splitId);
+        const payerId = (mergedData.payerParticipantId as string) || '';
+        const payer = participants.find((p) => p.id === payerId);
+        if (!payer) {
+          throw new BadRequestException('Payer does not exist.');
+        }
+        let payerIban = (payer.iban || '').trim();
+        if (!payerIban && payer.userUid) {
+          payerIban = ((await this.getUserIban(payer.userUid)) || '').trim();
+        }
+        if (!payerIban) {
+          throw new BadRequestException(
+            'Selected payer must have IBAN filled before finalization.',
+          );
+        }
         await this.assertFinalizationOk(splitId, mergedData, participants);
         updates.flowStep = 'settlement';
       } else if (dto.flowStep === 'closed') {
         updates.flowStep = 'closed';
       } else {
-        throw new BadRequestException('Neplatná zmena kroku flowu');
+        throw new BadRequestException('Invalid flow step change');
       }
     }
 
@@ -769,10 +783,10 @@ export class QuicksplitsService {
     if (dto.distributeRemainderEqually) {
       const fs = this.normalizeFlowStep(fresh);
       if (fs !== 'splitting' && fs !== 'settlement') {
-        throw new BadRequestException('Zostatok nie je možné rozdeliť v tomto kroku.');
+        throw new BadRequestException('Remainder cannot be distributed in this step.');
       }
       if ((fresh.splitMode as string) !== 'custom_amounts') {
-        throw new BadRequestException('Rovnomerné rozdelenie zostatku platí len pre režim „Každý svoju sumu“.');
+        throw new BadRequestException('Equal remainder distribution is allowed only in "Everyone enters amount" mode.');
       }
       await this.distributeRemainderEqually(splitId, ref, fresh);
       fresh = (await ref.get()).data()!;
@@ -780,7 +794,7 @@ export class QuicksplitsService {
     if (dto.remainderAssignments !== undefined) {
       const fs = this.normalizeFlowStep(fresh);
       if (fs !== 'splitting' && fs !== 'settlement') {
-        throw new BadRequestException('Manuálne priradenie zostatku nie je možné v tomto kroku.');
+        throw new BadRequestException('Manual remainder assignment is not allowed in this step.');
       }
       await this.assignRemainderManually(splitId, ref, fresh, dto.remainderAssignments);
       fresh = (await ref.get()).data()!;
@@ -835,21 +849,21 @@ export class QuicksplitsService {
     await this.firebase.getFirestore().runTransaction(async (tx) => {
       const splitSnap = await tx.get(ref);
       if (!splitSnap.exists) {
-        throw new NotFoundException('QuickSplit nenájdený');
+        throw new NotFoundException('QuickSplit not found');
       }
       const data = splitSnap.data()!;
       if (!this.verifyJoin(data, joinToken)) {
-        throw new ForbiddenException('Neplatný invite token');
+        throw new ForbiddenException('Invalid invite token');
       }
       const flowStep = this.normalizeFlowStep(data);
       const legacy = this.isLegacySplit(data);
       if (!legacy && flowStep !== 'waiting') {
-        throw new BadRequestException('Do tohto splitu sa už nedá pripojiť.');
+        throw new BadRequestException('This split can no longer be joined.');
       }
       const participantsSnap = await tx.get(this.participantsRef(splitId));
       const existing = participantsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as LoadedParticipant[];
       if (firebaseUid && existing.some((p) => p.userUid === firebaseUid)) {
-        throw new BadRequestException('Tento používateľ je už v splite pripojený.');
+        throw new BadRequestException('This user is already joined in the split.');
       }
       if (!legacy) {
         const cap = Math.min(
@@ -857,7 +871,7 @@ export class QuicksplitsService {
           Math.max(2, (data.targetParticipantCount as number) || existing.length + 1),
         );
         if (existing.length >= cap) {
-          throw new BadRequestException('Kapacita splitu je naplnená.');
+          throw new BadRequestException('Split capacity is full.');
         }
       }
       tx.set(this.participantsRef(splitId).doc(pid), {
@@ -892,19 +906,19 @@ export class QuicksplitsService {
   ) {
     const { data, ref } = await this.getSplitDoc(splitId);
     if (!this.verifyJoin(data, joinToken)) {
-      throw new ForbiddenException('Neplatný invite token');
+      throw new ForbiddenException('Invalid invite token');
     }
     await this.assertParticipantSecret(splitId, participantId, participantSecret);
 
     const flowStep = this.normalizeFlowStep(data);
     if (flowStep !== 'splitting' || data.splitMode !== 'custom_amounts') {
-      throw new BadRequestException('Úprava sumy je možná len v režime „Každý svoju sumu“ počas delenia.');
+      throw new BadRequestException('Amount updates are allowed only in "Everyone enters amount" mode during split.');
     }
 
     const now = new Date().toISOString();
     const pRef = this.participantsRef(splitId).doc(participantId);
     const pSnap = await pRef.get();
-    if (!pSnap.exists) throw new NotFoundException('Účastník nenájdený');
+    if (!pSnap.exists) throw new NotFoundException('Participant not found');
     const p = pSnap.data()!;
 
     await pRef.update({
@@ -950,7 +964,7 @@ export class QuicksplitsService {
 
     const pRef = this.participantsRef(splitId).doc(participantId);
     const pSnap = await pRef.get();
-    if (!pSnap.exists) throw new NotFoundException('Účastník nenájdený');
+    if (!pSnap.exists) throw new NotFoundException('Participant not found');
     const p = pSnap.data()!;
 
     const selfFirebase = !!(firebaseUid && p.userUid === firebaseUid);
@@ -961,7 +975,7 @@ export class QuicksplitsService {
 
     if (isPayerRow) {
       if (!(selfFirebase || selfSecret)) {
-        throw new ForbiddenException('IBAN platiteľa môže meniť len platiteľ');
+        throw new ForbiddenException('Only payer can change payer IBAN');
       }
     } else {
       if (selfFirebase) {
@@ -971,25 +985,40 @@ export class QuicksplitsService {
       } else if (adminToken && this.verifyAdmin(data, adminToken)) {
         // tvorca môže pomôcť ostatným (nie platiteľovi)
       } else {
-        throw new ForbiddenException('Úprava platobných údajov zamietnutá');
+        throw new ForbiddenException('Payment details update denied');
       }
     }
 
     const prevIban = (p.iban as string | null) ?? null;
+    const prevDisplayName = ((p.displayName as string | null) ?? '').trim();
     const iban =
       dto.iban === undefined ? prevIban : dto.iban?.replace(/\s/g, '').toUpperCase() ?? null;
-    await pRef.update({ iban });
+    const updates: Record<string, unknown> = { iban };
+    if (dto.displayName !== undefined) {
+      const requestedName = (dto.displayName ?? '').trim();
+      if (requestedName && !p.userUid) {
+        updates.displayName = requestedName;
+      }
+    }
+    await pRef.update(updates);
 
-    if (iban !== prevIban) {
+    const nextDisplayName =
+      updates.displayName !== undefined ? String(updates.displayName).trim() : prevDisplayName;
+    if (iban !== prevIban || nextDisplayName !== prevDisplayName) {
       await this.addActivity(splitId, {
         type: 'payment_details_updated',
         actorParticipantId: participantId,
         actorDisplayName: (p.displayName as string) || null,
-        meta: { isPayer: isPayerRow, hadIban: !!prevIban },
+        meta: {
+          isPayer: isPayerRow,
+          hadIban: !!prevIban,
+          ibanChanged: iban !== prevIban,
+          displayNameChanged: nextDisplayName !== prevDisplayName,
+        },
       });
     }
 
-    return { success: true, iban };
+    return { success: true, iban, displayName: nextDisplayName };
   }
 
   private async verifyParticipantSecretNoThrow(
@@ -1016,17 +1045,17 @@ export class QuicksplitsService {
     const { data, ref } = await this.getSplitDoc(splitId);
     const flowStep = this.normalizeFlowStep(data);
     if (flowStep !== 'settlement') {
-      throw new BadRequestException('Potvrdenie platby je možné až po dokončení delenia.');
+      throw new BadRequestException('Payment confirmation is available only after split is finalized.');
     }
 
     const payerId = data.payerParticipantId as string;
     if (participantId === payerId) {
-      throw new BadRequestException('Platiteľ nemá stav „zaplatil“ voči sám sebe');
+      throw new BadRequestException('Payer cannot have "paid" status toward themselves');
     }
 
     const pRef = this.participantsRef(splitId).doc(participantId);
     const pSnap = await pRef.get();
-    if (!pSnap.exists) throw new NotFoundException('Účastník nenájdený');
+    if (!pSnap.exists) throw new NotFoundException('Participant not found');
     const p = pSnap.data()!;
 
     const selfFirebase = !!(firebaseUid && p.userUid === firebaseUid);
@@ -1035,7 +1064,7 @@ export class QuicksplitsService {
       this.verifyJoin(data, joinToken) &&
       (await this.verifyParticipantSecretNoThrow(splitId, participantId, participantSecret));
     if (!selfFirebase && !selfSecret) {
-      throw new ForbiddenException('Stav platby môže meniť len daný účastník');
+      throw new ForbiddenException('Only that participant can change payment status');
     }
 
     const now = new Date().toISOString();

@@ -45,11 +45,11 @@ function formatCurrency(value: number) {
 function formatMembersCount(count: number) {
   const mod10 = count % 10;
   const mod100 = count % 100;
-  if (count === 1) return "1 člen";
+  if (count === 1) return "1 member";
   if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) {
-    return `${count} členovia`;
+    return `${count} members`;
   }
-  return `${count} členov`;
+  return `${count} members`;
 }
 
 export function PocketsHome() {
@@ -111,14 +111,20 @@ export function PocketsHome() {
       );
       setPocketStats(Object.fromEntries(details));
     } catch (err: any) {
-      setError(err.message || "Nepodarilo sa načítať pockety");
+      setError(err.message || "Failed to load Pockets");
     } finally {
       setIsLoading(false);
     }
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setIsLoading(false);
+      setAccepted([]);
+      setPending([]);
+      setPocketStats({});
+      return;
+    }
     void loadPockets();
   }, [user, loadPockets]);
 
@@ -129,16 +135,38 @@ export function PocketsHome() {
     });
   }, [accepted, router]);
 
-  if (loading || isLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
 
   if (!user) {
-    return null;
+    return (
+      <div className="min-h-screen bg-background w-full">
+        <div className="mx-auto flex min-h-screen max-w-screen-sm items-center px-5 py-8">
+          <div className="w-full rounded-[28px] border border-white/10 bg-white/[0.03] p-6 text-center shadow-[0_20px_80px_rgba(0,0,0,0.25)]">
+            <h1 className="text-2xl font-bold text-foreground">Sign in first</h1>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              You need to be signed in to view Pockets.
+            </p>
+            <Button asChild className="mt-8 h-12 w-full rounded-xl bg-[rgb(124,58,237)] text-white text-sm font-semibold hover:bg-[rgb(109,40,217)]">
+              <Link href="/ucet">Go to sign in</Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background w-full flex items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
   }
 
   if (accepted.length === 0 && pending.length === 0) {
@@ -150,17 +178,17 @@ export function PocketsHome() {
               <FolderOpen className="h-8 w-8" />
             </div>
             <h1 className="mt-6 text-2xl font-bold text-foreground">
-              Zatiaľ nemáš žiadny pocket
+              You don't have any Pockets yet
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              Vytvor si svoj prvý pocket a maj skupinové výdavky na jednom mieste
-              prehľadne a jednoducho.
+              Create your first Pocket and keep shared expenses in one place,
+              clear and simple.
             </p>
             <Button
               asChild
               className="mt-8 h-12 w-full rounded-xl bg-[rgb(124,58,237)] text-white text-sm font-semibold hover:bg-[rgb(109,40,217)]"
             >
-              <Link href="/pockety/new">Vytvoriť prvý pocket</Link>
+              <Link href="/pockety/new">Create your first Pocket</Link>
             </Button>
           </div>
         </div>
@@ -177,7 +205,7 @@ export function PocketsHome() {
         router.push(`/pockety/detail?pocketId=${encodeURIComponent(pocketId)}`);
       }
     } catch (err: any) {
-      setError(err.message || "Nepodarilo sa spracovať pozvánku");
+      setError(err.message || "Failed to process invite");
     } finally {
       setBusyPocketId(null);
     }
@@ -194,14 +222,14 @@ export function PocketsHome() {
 
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Pockety</h1>
+            <h1 className="text-2xl font-bold text-foreground">Pockets</h1>
           </div>
           <Button
             asChild
             variant="ghost"
             className="h-11 w-11 p-0 text-[rgb(124,58,237)] hover:bg-transparent hover:text-[rgb(109,40,217)]"
           >
-            <Link href="/pockety/new" aria-label="Vytvoriť nový pocket">
+            <Link href="/pockety/new" aria-label="Create new Pocket">
               <Plus className="h-6 w-6" />
             </Link>
           </Button>
@@ -210,7 +238,7 @@ export function PocketsHome() {
         {pending.length > 0 && (
           <section className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[rgb(196,181,253)]">
-              Čakajúce pozvánky
+              Pending invites
             </h2>
             {pending.map((pocket) => (
               <div
@@ -229,7 +257,7 @@ export function PocketsHome() {
                   ))}
                 </div>
                 <p className="mt-3 text-sm text-foreground/70">
-                  Pozvánku môžeš prijať alebo odmietnuť.
+                  You can accept or decline this invite.
                 </p>
                 <div className="mt-4 flex gap-3">
                   <Button
@@ -237,7 +265,7 @@ export function PocketsHome() {
                     disabled={busyPocketId === pocket.id}
                     onClick={() => handleRespond(pocket.id, "accepted")}
                   >
-                    Prijať
+                    Accept
                   </Button>
                   <Button
                     variant="outline"
@@ -245,7 +273,7 @@ export function PocketsHome() {
                     disabled={busyPocketId === pocket.id}
                     onClick={() => handleRespond(pocket.id, "rejected")}
                   >
-                    Odmietnuť
+                    Decline
                   </Button>
                 </div>
               </div>
@@ -255,11 +283,11 @@ export function PocketsHome() {
 
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Tvoje pockety
+            Your Pockets
           </h2>
           {accepted.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-muted-foreground">
-              Zatiaľ tu nemáš žiadny prijatý pocket.
+              You don't have any accepted Pockets yet.
             </div>
           ) : (
             accepted.map((pocket) => (
@@ -272,13 +300,13 @@ export function PocketsHome() {
                 <p className="text-lg font-semibold text-foreground">{pocket.name}</p>
                 <div className="mt-3 space-y-1 text-sm text-muted-foreground">
                   <p>{formatMembersCount(pocket.members.filter((member) => member.status === "accepted").length)}</p>
-                  <p>Spolu zaplatené: {formatCurrency(pocketStats[pocket.id]?.totalPaid ?? 0)}</p>
+                  <p>Total paid: {formatCurrency(pocketStats[pocket.id]?.totalPaid ?? 0)}</p>
                   <p>
                     {(() => {
                       const myNet = pocketStats[pocket.id]?.myNet ?? 0;
-                      if (myNet < 0) return `Dlžíš ${formatCurrency(Math.abs(myNet))}`;
-                      if (myNet > 0) return `Dlžia ti ${formatCurrency(myNet)}`;
-                      return "Vyrovnané 0,00 €";
+                      if (myNet < 0) return `You owe ${formatCurrency(Math.abs(myNet))}`;
+                      if (myNet > 0) return `You're owed ${formatCurrency(myNet)}`;
+                      return "Settled 0,00 €";
                     })()}
                   </p>
                 </div>

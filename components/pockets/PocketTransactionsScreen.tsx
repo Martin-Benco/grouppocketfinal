@@ -10,7 +10,7 @@ type PocketMember = {
   email: string | null;
   fullName: string | null;
   profileImageUrl: string | null;
-  status: "accepted" | "pending" | "rejected";
+  status: "accepted" | "pending" | "rejected" | "cancelled";
 };
 
 type PocketTransaction = {
@@ -42,7 +42,7 @@ function formatSkDate(iso: string | undefined | null): string | null {
   if (!iso?.trim()) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.trim();
-  return d.toLocaleDateString("sk-SK", { day: "numeric", month: "long", year: "numeric" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function isPayoutTransaction(tx: PocketTransaction) {
@@ -68,7 +68,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
   useEffect(() => {
     const load = async () => {
       if (!pocketId) {
-        setError("Chýba ID pocketu.");
+        setError("Pocket ID is missing.");
         setLoading(false);
         return;
       }
@@ -78,7 +78,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
         const result = (await api.pockets.get(pocketId)) as PocketDetail;
         setPocket(result);
       } catch (err: any) {
-        setError(err.message || "Nepodarilo sa načítať transakcie.");
+        setError(err.message || "Failed to load transactions.");
       } finally {
         setLoading(false);
       }
@@ -143,7 +143,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -153,23 +153,25 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-screen-sm px-5 py-8">
           <div className="rounded-[28px] border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-300">
-            {error || "Transakcie sa nepodarilo načítať."}
+            {error || "Failed to load transactions."}
           </div>
         </div>
       </div>
     );
   }
 
-  const acceptedMembers = pocket.members.filter((m) => m.status === "accepted");
+  const activeMembers = pocket.members.filter(
+    (m) => m.status === "accepted" || m.status === "pending",
+  );
   const transactions = pocket.transactions ?? [];
   const filteredTransactions = activeTagFilter
     ? transactions.filter((tx) => tx.tag === activeTagFilter)
     : transactions;
   const selectedTxPayer = selectedTx
-    ? acceptedMembers.find((member) => member.uid === selectedTx.payerUid)
+    ? activeMembers.find((member) => member.uid === selectedTx.payerUid)
     : null;
   const selectedDebtors = selectedTx
-    ? acceptedMembers.filter((member) => {
+    ? activeMembers.filter((member) => {
         if (member.uid === selectedTx.payerUid) return false;
         const assigned = selectedTx.splitAssignedUids ?? [];
         return assigned.length === 0 || assigned.includes(member.uid);
@@ -178,12 +180,13 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
   const amountPerDebtor =
     selectedTx && selectedDebtors.length > 0 ? selectedTx.amount / selectedDebtors.length : 0;
   const payerDisplay =
-    selectedTxPayer?.fullName || selectedTxPayer?.email || "Platca";
+    selectedTxPayer?.fullName || selectedTxPayer?.email || "Payer";
+  const isSelectedTxPayout = selectedTx ? isPayoutTransaction(selectedTx) : false;
   const payoutTargetUid = selectedTx ? (selectedTx.splitAssignedUids || [])[0] || "" : "";
-  const payoutTarget = payoutTargetUid ? acceptedMembers.find((member) => member.uid === payoutTargetUid) : null;
-  const payoutTargetDisplay = payoutTarget?.fullName || payoutTarget?.email || "Používateľ";
+  const payoutTarget = payoutTargetUid ? activeMembers.find((member) => member.uid === payoutTargetUid) : null;
+  const payoutTargetDisplay = payoutTarget?.fullName || payoutTarget?.email || "User";
   const payerToTargetLine =
-    selectedTx && isPayoutTransaction(selectedTx) ? `${payerDisplay} -> ${payoutTargetDisplay}` : payerDisplay;
+    isSelectedTxPayout ? `${payerDisplay} -> ${payoutTargetDisplay}` : payerDisplay;
   const debtorGraphItems = selectedDebtors.slice(0, 4).map((debtor, idx) => {
     const count = Math.min(selectedDebtors.length, 4);
     const yByCount: Record<number, number[]> = {
@@ -236,7 +239,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
       setTxDeleteConfirmOpen(false);
       closeSelectedTxSheet();
     } catch (err: any) {
-      setDetailActionError(err.message || "Transakciu sa nepodarilo vymazať.");
+      setDetailActionError(err.message || "Failed to delete transaction.");
       setTxDeleteConfirmOpen(false);
     } finally {
       setDetailDeleting(false);
@@ -274,11 +277,11 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             type="button"
             onClick={() => router.replace(`/pockety/detail?pocketId=${encodeURIComponent(pocket.id)}`)}
             className="text-foreground"
-            aria-label="Späť na detail pocketu"
+            aria-label="Back to Pocket detail"
           >
             <ChevronLeft className="h-6 w-6" />
           </button>
-          <h1 className="text-xl font-bold text-foreground">Transakcie</h1>
+          <h1 className="text-xl font-bold text-foreground">Transactions</h1>
         </div>
 
         {(pocket.tags?.length ?? 0) > 0 && (
@@ -310,23 +313,23 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             <div className="flex flex-col items-center justify-center py-4 text-center">
               <Receipt className="h-11 w-11 text-[#9CA3AF]" />
               <p className="mt-4 text-base font-semibold text-foreground">
-                {activeTagFilter ? "Pre tento tag tu nič nie je" : "Zatiaľ žiadne výdavky"}
+                {activeTagFilter ? "No transactions for this tag" : "No expenses yet"}
               </p>
               <p className="mt-2 max-w-[240px] text-sm leading-6 text-muted-foreground">
                 {activeTagFilter
-                  ? "Skús vybrať iný tag alebo filter vypnúť kliknutím na označený tag."
-                  : "Keď pridáš prvú transakciu, zobrazí sa práve tu."}
+                  ? "Try another tag or turn the filter off by tapping the selected tag."
+                  : "Your first transaction will appear here."}
               </p>
             </div>
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-white/10 bg-transparent">
             {filteredTransactions.map((tx, index) => {
-              const payer = acceptedMembers.find((member) => member.uid === tx.payerUid);
-              const payerName = payer?.fullName || payer?.email || "Používateľ";
+              const payer = activeMembers.find((member) => member.uid === tx.payerUid);
+              const payerName = payer?.fullName || payer?.email || "User";
               const txTargetUid = (tx.splitAssignedUids || [])[0] || "";
-              const txTarget = txTargetUid ? acceptedMembers.find((member) => member.uid === txTargetUid) : null;
-              const txTargetDisplay = txTarget?.fullName || txTarget?.email || "Používateľ";
+              const txTarget = txTargetUid ? activeMembers.find((member) => member.uid === txTargetUid) : null;
+              const txTargetDisplay = txTarget?.fullName || txTarget?.email || "User";
               const payerLine = isPayoutTransaction(tx) ? `${payerName} -> ${txTargetDisplay}` : payerName;
               return (
                 <button
@@ -368,7 +371,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             type="button"
             className="absolute inset-0 bg-black/65 backdrop-blur-[1px]"
             onClick={closeSelectedTxSheet}
-            aria-label="Zavrieť prehľad transakcie"
+            aria-label="Close transaction details"
           />
           <div
             className={`absolute bottom-0 left-0 right-0 flex max-h-[min(92vh,720px)] flex-col rounded-t-3xl border-t border-white/10 bg-[#12151d] shadow-2xl ${
@@ -389,14 +392,14 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
               <div className="min-w-0 flex-1">
                 <h3 className="text-2xl font-bold leading-snug text-foreground">{selectedTx.name}</h3>
                 <span className="mt-2 inline-block rounded-full border border-white/12 bg-white/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-foreground/80">
-                  {selectedTx.tag || "Bez tagu"}
+                  {selectedTx.tag || "No tag"}
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-0.5 pt-0.5">
                 <button
                   type="button"
                   className="rounded-xl p-2.5 text-foreground/80 transition hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40"
-                  aria-label="Upraviť transakciu"
+                  aria-label="Edit transaction"
                   disabled={detailDeleting}
                   onClick={() => {
                     const id = selectedTx.id;
@@ -411,7 +414,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                 <button
                   type="button"
                   className="rounded-xl p-2.5 text-red-300/90 transition hover:bg-red-500/15 disabled:opacity-40"
-                  aria-label="Vymazať transakciu"
+                  aria-label="Delete transaction"
                   disabled={detailDeleting}
                   onClick={askDeleteTx}
                 >
@@ -425,27 +428,27 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
               <dl className="mt-4 space-y-2.5 text-sm">
                 <div className="flex items-start justify-between gap-3">
                   <dt className="shrink-0 text-foreground/55">
-                    {selectedTx && isPayoutTransaction(selectedTx) ? "Kto platil komu" : "Platí"}
+                    {selectedTx && isPayoutTransaction(selectedTx) ? "Who paid whom" : "Payer"}
                   </dt>
                   <dd className="text-right font-medium text-foreground/95">
                     {payerToTargetLine}
                   </dd>
                 </div>
                 <div className="flex items-start justify-between gap-3">
-                  <dt className="shrink-0 text-foreground/55">Počet dlžníkov</dt>
+                  <dt className="shrink-0 text-foreground/55">Debtor count</dt>
                   <dd className="text-right font-medium text-foreground/95">{selectedDebtors.length}</dd>
                 </div>
                 {formatSkDate(selectedTx.date) && (
                   <div className="flex items-start justify-between gap-3">
-                    <dt className="shrink-0 text-foreground/55">Dátum</dt>
+                    <dt className="shrink-0 text-foreground/55">Date</dt>
                     <dd className="text-right font-medium text-foreground/95">{formatSkDate(selectedTx.date)}</dd>
                   </div>
                 )}
                 {selectedTx.createdAt?.trim() && (
                   <div className="flex items-start justify-between gap-3">
-                    <dt className="shrink-0 text-foreground/55">Zaznamenané</dt>
+                    <dt className="shrink-0 text-foreground/55">Recorded</dt>
                     <dd className="text-right font-medium text-foreground/95">
-                      {new Date(selectedTx.createdAt).toLocaleString("sk-SK", {
+                      {new Date(selectedTx.createdAt).toLocaleString("en-GB", {
                         day: "numeric",
                         month: "short",
                         year: "numeric",
@@ -457,7 +460,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                 )}
                 {selectedTx.note?.trim() && (
                   <div className="flex items-start justify-between gap-3">
-                    <dt className="shrink-0 text-foreground/55">Poznámka</dt>
+                    <dt className="shrink-0 text-foreground/55">Note</dt>
                     <dd className="max-w-[65%] text-right font-medium text-foreground/95">
                       {selectedTx.note}
                     </dd>
@@ -467,8 +470,71 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             </div>
 
             <div className="mt-6 border-t border-white/10 pt-5">
-              <p className="mb-3 text-sm font-semibold text-foreground/75">Ako sa to delí</p>
-              <div className="relative mx-auto h-52 w-full max-w-sm">
+              <p className="mb-3 text-sm font-semibold text-foreground/75">How it's split</p>
+              {isSelectedTxPayout ? (
+                <div className="relative mx-auto h-44 w-full max-w-sm">
+                  <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <marker id="arrow-payout" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                        <path d="M0,0 L6,3 L0,6 Z" fill="rgba(196,181,253,0.9)" />
+                      </marker>
+                    </defs>
+                    <line
+                      x1={22}
+                      y1={50}
+                      x2={78}
+                      y2={50}
+                      stroke="rgba(196,181,253,0.65)"
+                      strokeWidth="1.2"
+                      markerEnd="url(#arrow-payout)"
+                    />
+                  </svg>
+
+                  <div
+                    className="absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-[#141824] px-2 py-0.5 text-[10px] font-medium text-foreground/80"
+                    style={{ left: "50%", top: "50%" }}
+                  >
+                    {selectedTx ? formatCurrency(selectedTx.amount) : "0.00 €"}
+                  </div>
+
+                  <div
+                    className="absolute left-[18%] top-1/2 z-30 h-[66px] w-[66px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full border border-white/25 bg-[#1a1e28]"
+                  >
+                    {selectedTxPayer?.profileImageUrl ? (
+                      <img src={selectedTxPayer.profileImageUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xl font-bold text-white">
+                        {getInitial(payerDisplay)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="pointer-events-none absolute left-[18%] top-[calc(50%+43px)] z-30 max-w-[96px] -translate-x-1/2 text-center">
+                    <span className="block truncate text-[10px] font-semibold leading-tight text-foreground/90">
+                      {payerDisplay}
+                    </span>
+                  <span className="mt-0.5 block text-[9px] text-foreground/65">Payer</span>
+                  </div>
+
+                  <div
+                    className="absolute left-[82%] top-1/2 z-30 h-[66px] w-[66px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full border border-[rgb(124,58,237)] bg-[radial-gradient(circle,rgba(124,58,237,0.45)_0%,rgba(124,58,237,0.16)_72%)]"
+                  >
+                    {payoutTarget?.profileImageUrl ? (
+                      <img src={payoutTarget.profileImageUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xl font-bold text-white">
+                        {getInitial(payoutTargetDisplay)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="pointer-events-none absolute left-[82%] top-[calc(50%+43px)] z-30 max-w-[96px] -translate-x-1/2 text-center">
+                    <span className="block truncate text-[10px] font-semibold leading-tight text-foreground/90">
+                      {payoutTargetDisplay}
+                    </span>
+                  <span className="mt-0.5 block text-[9px] text-foreground/65">Recipient</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative mx-auto h-52 w-full max-w-sm">
                 <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <defs>
                     <marker id="arrow-to-payer" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
@@ -509,7 +575,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                 </svg>
 
                 {debtorGraphItems.map((item) => {
-                  const debtorName = item.debtor.fullName || item.debtor.email || "Používateľ";
+                  const debtorName = item.debtor.fullName || item.debtor.email || "User";
                   const photo = item.debtor.profileImageUrl;
                   return (
                     <Fragment key={item.debtor.uid}>
@@ -579,6 +645,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                   </span>
                 </div>
               </div>
+              )}
             </div>
 
             {detailActionError && (
@@ -598,12 +665,12 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             type="button"
             className="absolute inset-0 bg-black/70 backdrop-blur-[2px]"
             onClick={cancelDeleteTx}
-            aria-label="Zavrieť potvrdenie mazania"
+            aria-label="Close delete confirmation"
           />
           <div className="relative w-full max-w-sm rounded-2xl border border-white/15 bg-[#151922] p-5 shadow-2xl">
-            <h4 className="text-lg font-bold text-foreground">Vymazať transakciu?</h4>
+            <h4 className="text-lg font-bold text-foreground">Delete transaction?</h4>
             <p className="mt-2 text-sm text-foreground/75">
-              Túto akciu už nebude možné vrátiť späť.
+              This action cannot be undone.
             </p>
             <div className="mt-5 flex gap-2">
               <button
@@ -612,7 +679,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                 onClick={cancelDeleteTx}
                 disabled={detailDeleting}
               >
-                Zrušiť
+                Cancel
               </button>
               <button
                 type="button"
@@ -620,7 +687,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
                 onClick={confirmDeleteTx}
                 disabled={detailDeleting}
               >
-                {detailDeleting ? "Mažem..." : "Vymazať"}
+                {detailDeleting ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>

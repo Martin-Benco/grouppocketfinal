@@ -12,7 +12,7 @@ type PocketMember = {
   email: string | null;
   fullName: string | null;
   profileImageUrl: string | null;
-  status: "accepted" | "pending" | "rejected";
+  status: "accepted" | "pending" | "rejected" | "cancelled";
 };
 
 type PocketTransactionRow = {
@@ -88,7 +88,10 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
   const parseDecimal = (value: string) => Number(value.replace(",", "."));
 
   const acceptedMembers = useMemo(
-    () => pocket?.members.filter((member) => member.status === "accepted") ?? [],
+    () =>
+      pocket?.members.filter(
+        (member) => member.status === "accepted" || member.status === "pending",
+      ) ?? [],
     [pocket?.members],
   );
   const acceptedMemberUids = useMemo(
@@ -99,7 +102,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
   useEffect(() => {
     const load = async () => {
       if (!pocketId) {
-        setError("Chýba ID pocketu.");
+        setError("Pocket ID is missing.");
         setLoading(false);
         return;
       }
@@ -110,7 +113,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
         const result = (await api.pockets.get(pocketId)) as PocketDetail;
         setPocket(result);
       } catch (err: any) {
-        setError(err.message || "Nepodarilo sa načítať pocket.");
+        setError(err.message || "Failed to load Pocket.");
       } finally {
         setLoading(false);
       }
@@ -213,19 +216,19 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
             .map((member) => member.uid);
 
     if (!trimmedName) {
-      setTransactionError("Vyplň názov platby.");
+      setTransactionError("Enter payment name.");
       return;
     }
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      setTransactionError("Zadaj platnú sumu.");
+      setTransactionError("Enter a valid amount.");
       return;
     }
     if (!payerUid) {
-      setTransactionError("Vyber kto platí.");
+      setTransactionError("Select who pays.");
       return;
     }
     if (assignedUids.length === 0) {
-      setTransactionError("Vyber aspoň jedného človeka pre rozdelenie.");
+      setTransactionError("Select at least one person for split.");
       return;
     }
 
@@ -252,7 +255,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
         router.replace(`/pockety/detail?pocketId=${encodeURIComponent(pocket.id)}`);
       }
     } catch (err: any) {
-      setTransactionError(err.message || "Transakciu sa nepodarilo uložiť.");
+      setTransactionError(err.message || "Failed to save transaction.");
     } finally {
       setIsSavingTransaction(false);
     }
@@ -263,7 +266,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
       const allChecked =
         acceptedMemberUids.length > 0 &&
         acceptedMemberUids.every((uid) => selectedSplitUids.includes(uid));
-      return allChecked ? "Rovnomerne" : "Vlastné";
+      return allChecked ? "Equal" : "Custom";
     }
 
     if (splitMode === "amount") {
@@ -271,20 +274,20 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
         Number((splitAmounts[uid] || "").replace(",", ".")),
       );
       const allValid = values.length > 0 && values.every((v) => Number.isFinite(v) && v > 0);
-      if (!allValid) return "Vlastné";
+      if (!allValid) return "Custom";
       const first = values[0];
       const allSame = values.every((v) => Math.abs(v - first) < 0.00001);
-      return allSame ? "Podľa množstva" : "Vlastné";
+      return allSame ? "By amount" : "Custom";
     }
 
     const values = acceptedMemberUids.map((uid) =>
       Number((splitPercents[uid] || "").replace(",", ".")),
     );
     const allValid = values.length > 0 && values.every((v) => Number.isFinite(v) && v >= 0);
-    if (!allValid) return "Vlastné";
+    if (!allValid) return "Custom";
     const first = values[0];
     const allSame = values.every((v) => Math.abs(v - first) < 0.00001);
-    return allSame ? "Podľa percent" : "Vlastné";
+    return allSame ? "By percent" : "Custom";
   }, [acceptedMemberUids, selectedSplitUids, splitAmounts, splitMode, splitPercents]);
   const totalAmountValue = Number(amount.replace(",", "."));
   const hasValidAmount = Number.isFinite(totalAmountValue) && totalAmountValue > 0;
@@ -355,7 +358,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
   }, [transactionDate]);
   const selectedDateLabel = useMemo(
     () =>
-      selectedDateObj.toLocaleDateString("sk-SK", {
+      selectedDateObj.toLocaleDateString("en-GB", {
         day: "2-digit",
         month: "long",
         year: "numeric",
@@ -363,7 +366,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
     [selectedDateObj],
   );
   const monthLabel = useMemo(
-    () => calendarMonth.toLocaleDateString("sk-SK", { month: "long", year: "numeric" }),
+    () => calendarMonth.toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
     [calendarMonth],
   );
   const daysInMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
@@ -376,7 +379,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Načítavam...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -386,7 +389,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-screen-sm px-5 py-8">
           <div className="rounded-[28px] border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-300">
-            {error || "Pocket sa nepodarilo načítať."}
+            {error || "Failed to load Pocket."}
           </div>
         </div>
       </div>
@@ -396,7 +399,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
   const selectedPayerName =
     acceptedMembers.find((member) => member.uid === payerUid)?.fullName ||
     acceptedMembers.find((member) => member.uid === payerUid)?.email ||
-    "Vyber používateľa";
+    "Select user";
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     dragStartYRef.current = e.touches[0]?.clientY ?? null;
@@ -509,29 +512,29 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
             href={detailHref}
             replace
             className="inline-flex items-center justify-center text-foreground touch-manipulation"
-            aria-label="Späť na detail pocketu"
+            aria-label="Back to Pocket detail"
           >
             <ChevronLeft className="h-6 w-6" />
           </Link>
           <h1 className="text-xl font-bold text-foreground">
-            {editTransactionId ? "Upraviť transakciu" : "Pridať transakciu"}
+            {editTransactionId ? "Edit transaction" : "Add transaction"}
           </h1>
         </div>
 
         <div className="mt-6 space-y-4 pb-8">
           <div>
-            <label className="mb-2 block text-sm text-foreground/80">Názov platby *</label>
+            <label className="mb-2 block text-sm text-foreground/80">Payment name *</label>
             <input
               type="text"
               value={transactionName}
               onChange={(e) => setTransactionName(e.target.value)}
-              placeholder="Zadajte názov platby"
+              placeholder="Enter payment name"
               className="h-12 w-full rounded-lg border border-foreground/15 bg-background px-4 text-foreground placeholder:text-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm text-foreground/80">Tag transakcie</label>
+              <label className="mb-2 block text-sm text-foreground/80">Transaction tag</label>
             <div className="flex flex-wrap gap-2">
               {(pocket.tags ?? []).map((tag) => {
                 const selected = transactionTag === tag;
@@ -569,9 +572,9 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-3">
             <div>
-              <label className="mb-2 block text-sm text-foreground/80">Platí *</label>
+              <label className="mb-2 block text-sm text-foreground/80">Paid by *</label>
               <div className="relative">
                 <button
                   type="button"
@@ -590,7 +593,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
               </div>
             </div>
             <div>
-              <label className="mb-2 block text-sm text-foreground/80">Rozdelenie *</label>
+              <label className="mb-2 block text-sm text-foreground/80">Split *</label>
               <button
                 type="button"
                 onClick={() => {
@@ -616,13 +619,13 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
 
           <div className="space-y-3">
             <div>
-              <label className="mb-2 block text-sm text-foreground/80">Dátum</label>
+              <label className="mb-2 block text-sm text-foreground/80">Date</label>
               <div className="relative">
                 <button
                   type="button"
                   onClick={openDatePicker}
                   className="flex h-12 w-full items-center justify-between rounded-lg border border-foreground/15 bg-background px-4 text-left text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  aria-label="Vybrať dátum"
+                  aria-label="Pick date"
                 >
                   <span className="text-sm">{selectedDateLabel}</span>
                   <CalendarDays className="h-4 w-4 text-foreground/75" />
@@ -630,12 +633,12 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
               </div>
             </div>
             <div>
-              <label className="mb-2 block text-sm text-foreground/80">Poznámka</label>
+              <label className="mb-2 block text-sm text-foreground/80">Note</label>
               <input
                 type="text"
                 value={transactionNote}
                 onChange={(e) => setTransactionNote(e.target.value)}
-                placeholder="Sem napíš poznámku"
+                placeholder="Add a note"
                 className="h-12 w-full rounded-lg border border-foreground/15 bg-background px-4 text-foreground placeholder:text-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
@@ -649,10 +652,10 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
             disabled={isSavingTransaction}
           >
             {isSavingTransaction
-              ? "Ukladám..."
+              ? "Saving..."
               : editTransactionId
-                ? "Uložiť zmeny"
-                : "Uložiť"}
+                ? "Save changes"
+                : "Save"}
           </Button>
         </div>
       </div>
@@ -664,7 +667,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
       >
         <button
           type="button"
-          aria-label="Zavrieť kalendár"
+          aria-label="Close calendar"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={() => setIsDateSheetOpen(false)}
         />
@@ -683,7 +686,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                 setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
               }
               className="inline-flex h-9 w-9 items-center justify-center text-foreground/90"
-              aria-label="Predchádzajúci mesiac"
+              aria-label="Previous month"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -694,13 +697,13 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                 setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
               }
               className="inline-flex h-9 w-9 items-center justify-center text-foreground/90"
-              aria-label="Nasledujúci mesiac"
+              aria-label="Next month"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
           <div className="mb-2 grid grid-cols-7 text-center text-[11px] uppercase tracking-wide text-foreground/45">
-            {["Po", "Ut", "St", "Št", "Pi", "So", "Ne"].map((d) => (
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
               <span key={d}>{d}</span>
             ))}
           </div>
@@ -740,7 +743,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
       >
         <button
           type="button"
-          aria-label="Zavrieť výber platiaceho"
+          aria-label="Close payer selection"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={closePayerSheet}
         />
@@ -760,11 +763,11 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
         >
           <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
           <div className="mb-3 flex items-center">
-            <h2 className="text-base font-semibold text-foreground">Kto platil</h2>
+            <h2 className="text-base font-semibold text-foreground">Who paid</h2>
           </div>
           <div className="h-[calc(50vh-70px)] space-y-2 overflow-y-auto pr-1">
             {acceptedMembers.map((member) => {
-              const displayName = member.fullName || member.email || "Používateľ";
+              const displayName = member.fullName || member.email || "User";
               const isSelected = member.uid === payerUid;
               return (
                 <button
@@ -794,7 +797,9 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                     )}
                     <span className="truncate text-sm text-foreground">{displayName}</span>
                   </div>
-                  {isSelected && <span className="text-xs font-semibold text-[rgb(196,181,253)]">Vybraný</span>}
+                  <span className="text-xs font-semibold text-[rgb(196,181,253)]">
+                    {isSelected ? "Selected" : member.status === "pending" ? "Invited" : ""}
+                  </span>
                 </button>
               );
             })}
@@ -809,7 +814,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
       >
         <button
           type="button"
-          aria-label="Zavrieť výber rozdelenia"
+          aria-label="Close split selection"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={closeSplitSheet}
         />
@@ -828,7 +833,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
           }}
         >
           <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
-          <h2 className="mb-3 text-base font-semibold text-foreground">Rozdelenie</h2>
+          <h2 className="mb-3 text-base font-semibold text-foreground">Split</h2>
 
           <div className="mb-3 grid grid-cols-3 gap-2">
             <button
@@ -840,7 +845,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                   : "border-white/10 bg-white/[0.02] text-foreground/80"
               }`}
             >
-              Rovnomerne
+              Equal
             </button>
             <button
               type="button"
@@ -851,7 +856,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                   : "border-white/10 bg-white/[0.02] text-foreground/80"
               }`}
             >
-              Podľa množstva
+              By amount
             </button>
             <button
               type="button"
@@ -862,16 +867,16 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                   : "border-white/10 bg-white/[0.02] text-foreground/80"
               }`}
             >
-              Podľa percent
+              By percent
             </button>
           </div>
 
           <p className="mb-3 text-xs leading-5 text-foreground/65">
             {splitMode === "equal"
-              ? "Rovnomerne: vyber, ktorí členovia budú zahrnutí do rozdelenia. Každý označený člen bude mať rovnaký podiel."
+              ? "Equal: choose which members are included in the split. Every selected member gets the same share."
               : splitMode === "amount"
-                ? "Podľa množstva: každému členovi zadaj presnú sumu v eurách, ktorú má mať priradenú."
-                : "Podľa percent: každému členovi zadaj percentuálny podiel na celkovej sume."}
+                ? "By amount: enter the exact euro amount for each member."
+                : "By percent: enter each member's percentage of the total amount."}
           </p>
 
           <div
@@ -882,7 +887,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
             }`}
           >
             {acceptedMembers.map((member) => {
-              const displayName = member.fullName || member.email || "Používateľ";
+              const displayName = member.fullName || member.email || "User";
               const isChecked = selectedSplitUids.includes(member.uid);
               const toggleChecked = () =>
                 setSelectedSplitUids((prev) =>
@@ -970,7 +975,7 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
           {splitMode === "amount" && (
             <div className="mt-3 px-0.5 py-1">
               <div className="flex items-center justify-between text-xs text-foreground/70">
-                <span>Celková suma</span>
+                <span>Total amount</span>
                 <span className="font-semibold text-foreground">
                   {Number.isFinite(totalAmountValue) && totalAmountValue > 0
                     ? `${totalAmountValue.toFixed(2)} €`
@@ -978,20 +983,20 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
                 </span>
               </div>
               <div className="mt-1.5 flex items-center justify-between text-xs text-foreground/70">
-                <span>Rozdelené</span>
+                <span>Split</span>
                 <span className="font-semibold text-foreground">{distributedAmountValue.toFixed(2)} €</span>
               </div>
               {amountDifference !== null && (
                 <div className="mt-2 text-xs">
                   {Math.abs(amountDifference) < 0.005 ? (
-                    <span className="font-medium text-emerald-400">Suma je rozdelená správne.</span>
+                    <span className="font-medium text-emerald-400">Amount is split correctly.</span>
                   ) : amountDifference > 0 ? (
                     <span className="font-medium text-amber-300">
-                      Chýba rozdeliť ešte {amountDifference.toFixed(2)} €
+                      Remaining to split: {amountDifference.toFixed(2)} €
                     </span>
                   ) : (
                     <span className="font-medium text-red-300">
-                      Rozdelené je o {Math.abs(amountDifference).toFixed(2)} € viac
+                      Over-split by {Math.abs(amountDifference).toFixed(2)} €
                     </span>
                   )}
                 </div>
@@ -1001,23 +1006,23 @@ export function PocketTransactionCreateScreen({ pocketId }: { pocketId: string }
           {splitMode === "percent" && (
             <div className="mt-3 px-0.5 py-1">
               <div className="flex items-center justify-between text-xs text-foreground/70">
-                <span>Celkovo</span>
+                <span>Total</span>
                 <span className="font-semibold text-foreground">100 %</span>
               </div>
               <div className="mt-1.5 flex items-center justify-between text-xs text-foreground/70">
-                <span>Rozdelené</span>
+                <span>Split</span>
                 <span className="font-semibold text-foreground">{distributedPercentValue.toFixed(2)} %</span>
               </div>
               <div className="mt-2 text-xs">
                 {Math.abs(percentDifference) < 0.005 ? (
-                  <span className="font-medium text-emerald-400">Percentá sú rozdelené správne.</span>
+                  <span className="font-medium text-emerald-400">Percentages are split correctly.</span>
                 ) : percentDifference > 0 ? (
                   <span className="font-medium text-amber-300">
-                    Chýba rozdeliť ešte {percentDifference.toFixed(2)} %
+                    Remaining to split: {percentDifference.toFixed(2)} %
                   </span>
                 ) : (
                   <span className="font-medium text-red-300">
-                    Rozdelené je o {Math.abs(percentDifference).toFixed(2)} % viac
+                    Over-split by {Math.abs(percentDifference).toFixed(2)} %
                   </span>
                 )}
               </div>

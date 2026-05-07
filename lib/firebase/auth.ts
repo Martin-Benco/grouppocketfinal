@@ -96,7 +96,7 @@ export const updateUserEmail = async (newEmail: string) => {
     const authInstance = getRequiredAuth();
     const user = authInstance.currentUser;
     if (!user) {
-      throw new Error("Používateľ nie je prihlásený");
+      throw new Error("User is not signed in");
     }
     await updateEmail(user, newEmail);
   } catch (error) {
@@ -109,7 +109,7 @@ export const updateUserPassword = async (currentPassword: string, newPassword: s
     const authInstance = getRequiredAuth();
     const user = authInstance.currentUser;
     if (!user || !user.email) {
-      throw new Error("Používateľ nie je prihlásený");
+      throw new Error("User is not signed in");
     }
 
     // Re-authenticate user with current password
@@ -120,9 +120,9 @@ export const updateUserPassword = async (currentPassword: string, newPassword: s
     await updatePassword(user, newPassword);
   } catch (error: any) {
     if (error.code === "auth/wrong-password") {
-      throw new Error("Nesprávne aktuálne heslo");
+      throw new Error("Incorrect current password");
     } else if (error.code === "auth/weak-password") {
-      throw new Error("Nové heslo je príliš slabé");
+      throw new Error("New password is too weak");
     } else {
       throw error;
     }
@@ -134,7 +134,7 @@ export const addUserPassword = async (newPassword: string) => {
     const authInstance = getRequiredAuth();
     const user = authInstance.currentUser;
     if (!user) {
-      throw new Error("Používateľ nie je prihlásený");
+      throw new Error("User is not signed in");
     }
 
     // Re-authenticate user with their provider (Google/Apple) before adding password
@@ -144,16 +144,16 @@ export const addUserPassword = async (newPassword: string) => {
     } else if (providerId === "apple.com") {
       await reauthenticateWithPopup(user, appleProvider);
     } else {
-      throw new Error("Nepodporovaný spôsob prihlásenia");
+      throw new Error("Unsupported sign-in method");
     }
 
     // Add password after re-authentication
     await updatePassword(user, newPassword);
   } catch (error: any) {
     if (error.code === "auth/weak-password") {
-      throw new Error("Heslo je príliš slabé");
+      throw new Error("Password is too weak");
     } else if (error.code === "auth/popup-closed-by-user") {
-      throw new Error("Okno bolo zatvorené. Skúste znova.");
+      throw new Error("Popup was closed. Please try again.");
     } else {
       throw error;
     }
@@ -171,7 +171,7 @@ export const resetPassword = async (email: string) => {
     } catch (fetchError: any) {
       // Ak fetchSignInMethodsForEmail zlyhá s user-not-found, účet neexistuje
       if (fetchError.code === "auth/user-not-found") {
-        throw new Error("Účet s týmto e-mailom neexistuje");
+        throw new Error("No account exists with this email");
       }
       // Pre ostatné chyby pokračujeme - možno účet existuje, ale metóda zlyhala
       // V tomto prípade skúsiť odoslať e-mail
@@ -191,22 +191,22 @@ export const resetPassword = async (email: string) => {
     const hasPassword = signInMethods.includes("password");
     
     if (!hasPassword) {
-      throw new Error("Tento účet nemá nastavené heslo. Prihláste sa pomocou sociálnej siete.");
+      throw new Error("This account has no password set. Sign in with social login.");
     }
     
     // Ak účet existuje a má heslo, odoslať e-mail
     await sendPasswordResetEmail(authInstance, email);
   } catch (error: any) {
     // Ak je to naša vlastná chyba, vyhodíme ju
-    if (error.message === "Účet s týmto e-mailom neexistuje" || 
-        error.message === "Tento účet nemá nastavené heslo. Prihláste sa pomocou sociálnej siete.") {
+    if (error.message === "No account exists with this email" || 
+        error.message === "This account has no password set. Sign in with social login.") {
       throw error;
     }
     // Firebase môže vrátiť user-not-found
     if (error.code === "auth/user-not-found") {
-      throw new Error("Účet s týmto e-mailom neexistuje");
+      throw new Error("No account exists with this email");
     } else if (error.code === "auth/invalid-email") {
-      throw new Error("Neplatný e-mail");
+      throw new Error("Invalid email");
     } else {
       // Pre ostatné chyby vyhodíme pôvodnú chybu
       throw error;

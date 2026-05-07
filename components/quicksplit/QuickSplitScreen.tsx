@@ -1407,7 +1407,7 @@ export function QuickSplitScreen() {
               </div>
             </div>
             <p className="text-xs text-foreground/60">
-              Configure split in the "Split mode" popup.
+              Configure split in the &quot;Split mode&quot; popup.
             </p>
           </section>
         )}
@@ -1419,7 +1419,7 @@ export function QuickSplitScreen() {
                 <p className="text-sm text-muted-foreground">You owe</p>
                 <p className="text-4xl font-extrabold text-primary tabular-nums">{formatEur(myParticipant.oweToPayerCents)}</p>
                 <p className="text-lg text-foreground">
-                  komu: <span className="font-bold">{split.payerDisplayName}</span>
+                  to: <span className="font-bold">{split.payerDisplayName}</span>
                 </p>
                 <Button
                   type="button"

@@ -482,7 +482,7 @@ export function PocketCreationFlow() {
 
                   {data.invitedUsers.length === 0 && (
                     <p className="text-sm text-foreground/70">
-                      You haven't added anyone else yet.
+                      You haven&apos;t added anyone else yet.
                     </p>
                   )}
                 </div>

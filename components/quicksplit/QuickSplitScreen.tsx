@@ -1018,7 +1018,7 @@ export function QuickSplitScreen() {
               </div>
               {!scannerSupported && (
                 <p className="text-xs text-amber-400">
-                  Your browser doesn't support direct QR scanning. Open the join link manually.
+                  Your browser doesn&apos;t support direct QR scanning. Open the join link manually.
                 </p>
               )}
               {scannerError && <p className="text-xs text-red-400">{scannerError}</p>}
@@ -1308,7 +1308,7 @@ export function QuickSplitScreen() {
                 </Button>
                 {!allJoined && (
                   <p className="text-xs text-center text-muted-foreground">
-                    You can continue even if not everyone joined yet - others won't be able to join later.
+                    You can continue even if not everyone joined yet - others won&apos;t be able to join later.
                   </p>
                 )}
               </div>
@@ -1432,7 +1432,7 @@ export function QuickSplitScreen() {
                 {payMeUrl ? (
                   <div className="space-y-3 text-left rounded-xl border border-foreground/10 bg-background/40 p-3">
                     <p className="text-xs text-muted-foreground text-center">
-                      If the banking app doesn't open, use the details below or open{" "}
+                      If the banking app doesn&apos;t open, use the details below or open{" "}
                       <button type="button" onClick={openPayMe} className="text-primary underline underline-offset-2">
                         payment in banking app
                       </button>

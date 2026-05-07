@@ -29,7 +29,7 @@ export function PocketsEmptyState() {
           </div>
 
           <h1 className="mt-6 text-2xl font-bold text-foreground">
-            You don't have any Pockets yet
+            You don&apos;t have any Pockets yet
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-muted-foreground">

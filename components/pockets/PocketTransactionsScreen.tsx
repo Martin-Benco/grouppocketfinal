@@ -470,7 +470,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
             </div>
 
             <div className="mt-6 border-t border-white/10 pt-5">
-              <p className="mb-3 text-sm font-semibold text-foreground/75">How it's split</p>
+              <p className="mb-3 text-sm font-semibold text-foreground/75">How it&apos;s split</p>
               {isSelectedTxPayout ? (
                 <div className="relative mx-auto h-44 w-full max-w-sm">
                   <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">

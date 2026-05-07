@@ -178,7 +178,7 @@ export function PocketsHome() {
               <FolderOpen className="h-8 w-8" />
             </div>
             <h1 className="mt-6 text-2xl font-bold text-foreground">
-              You don't have any Pockets yet
+              You don&apos;t have any Pockets yet
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               Create your first Pocket and keep shared expenses in one place,
@@ -287,7 +287,7 @@ export function PocketsHome() {
           </h2>
           {accepted.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-muted-foreground">
-              You don't have any accepted Pockets yet.
+              You don&apos;t have any accepted Pockets yet.
             </div>
           ) : (
             accepted.map((pocket) => (

@@ -6,6 +6,7 @@ import { ChevronLeft, Plus, Receipt, Search, Trash2, UserPlus } from "lucide-rea
 import { api } from "@/lib/api/client";
 import { auth } from "@/lib/firebase/config";
 import { useAuth } from "@/contexts/AuthContext";
+import { resolvePocketTransactionSplit } from "@/lib/pockets/transactionSplit";
 
 type PocketMember = {
   uid: string;
@@ -120,11 +121,7 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
   const totalAmount = pocket?.analytics?.totalAmount ?? transactions.reduce((sum, tx) => sum + tx.amount, 0);
   const paidAmount = pocket?.analytics?.paidAmount ?? transactions.reduce((sum, tx) => sum + tx.amount, 0);
 
-  const getDebtorUids = (tx: PocketTransaction) => {
-    const explicit = (tx.splitAssignedUids || []).filter((uid) => uid !== tx.payerUid);
-    if (explicit.length > 0) return explicit;
-    return acceptedMembers.filter((m) => m.uid !== tx.payerUid).map((m) => m.uid);
-  };
+  const acceptedMemberUids = acceptedMembers.map((m) => m.uid);
 
   const pocketNetByMember = acceptedMembers.reduce<Record<string, number>>((acc, member) => {
     acc[member.uid] = 0;
@@ -137,27 +134,36 @@ export function PocketDetailScreen({ pocketId }: { pocketId: string }) {
   }, {});
 
   transactions.forEach((tx) => {
-    const debtors = getDebtorUids(tx);
-    const count = debtors.length;
-    if (count <= 0) return;
-    const share = tx.amount / count;
+    const resolved = resolvePocketTransactionSplit({
+      amount: tx.amount,
+      payerUid: tx.payerUid,
+      splitAssignedUids: tx.splitAssignedUids,
+      acceptedMemberUids,
+    });
+    if (!resolved) return;
 
     pocketNetByMember[tx.payerUid] = (pocketNetByMember[tx.payerUid] ?? 0) + tx.amount;
-    debtors.forEach((uid) => {
-      pocketNetByMember[uid] = (pocketNetByMember[uid] ?? 0) - share;
-    });
+    if (resolved.splitUids.length > 0) {
+      resolved.splitUids.forEach((uid) => {
+        pocketNetByMember[uid] = (pocketNetByMember[uid] ?? 0) - resolved.sharePerPerson;
+      });
+    } else {
+      resolved.debtorUids.forEach((uid) => {
+        pocketNetByMember[uid] = (pocketNetByMember[uid] ?? 0) - resolved.sharePerPerson;
+      });
+    }
 
     if (!currentUid) return;
     if (tx.payerUid === currentUid) {
-      debtors.forEach((uid) => {
+      resolved.debtorUids.forEach((uid) => {
         if (uid !== currentUid) {
-          bilateralVsCurrent[uid] = (bilateralVsCurrent[uid] ?? 0) + share;
+          bilateralVsCurrent[uid] = (bilateralVsCurrent[uid] ?? 0) + resolved.sharePerPerson;
         }
       });
       return;
     }
-    if (debtors.includes(currentUid)) {
-      bilateralVsCurrent[tx.payerUid] = (bilateralVsCurrent[tx.payerUid] ?? 0) - share;
+    if (resolved.debtorUids.includes(currentUid)) {
+      bilateralVsCurrent[tx.payerUid] = (bilateralVsCurrent[tx.payerUid] ?? 0) - resolved.sharePerPerson;
     }
   });
 

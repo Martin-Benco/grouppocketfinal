@@ -6,6 +6,7 @@ import { FolderOpen, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api/client";
+import { resolvePocketTransactionSplit } from "@/lib/pockets/transactionSplit";
 import { Button } from "@/components/ui/button";
 
 type PocketMember = {
@@ -76,6 +77,7 @@ export function PocketsHome() {
           try {
             const detail = (await api.pockets.getFresh(pocket.id)) as PocketDetailStats;
             const acceptedMembers = pocket.members.filter((member) => member.status === "accepted");
+            const acceptedMemberUids = acceptedMembers.map((member) => member.uid);
             const transactions = detail.transactions || [];
             const totalPaid =
               detail.analytics?.totalAmount ??
@@ -85,18 +87,22 @@ export function PocketsHome() {
             transactions.forEach((tx) => {
               const amount = Number(tx.amount) || 0;
               if (amount <= 0) return;
-              const debtors =
-                (tx.splitAssignedUids || []).filter((uid) => uid !== tx.payerUid).length > 0
-                  ? (tx.splitAssignedUids || []).filter((uid) => uid !== tx.payerUid)
-                  : acceptedMembers.filter((member) => member.uid !== tx.payerUid).map((member) => member.uid);
-              const count = debtors.length;
-              if (count <= 0) return;
-              const share = amount / count;
+              const resolved = resolvePocketTransactionSplit({
+                amount,
+                payerUid: tx.payerUid,
+                splitAssignedUids: tx.splitAssignedUids,
+                acceptedMemberUids,
+              });
+              if (!resolved) return;
               if (tx.payerUid === myUid) {
                 myNet += amount;
               }
-              if (debtors.includes(myUid)) {
-                myNet -= share;
+              if (resolved.splitUids.length > 0) {
+                if (resolved.splitUids.includes(myUid)) {
+                  myNet -= resolved.sharePerPerson;
+                }
+              } else if (resolved.debtorUids.includes(myUid)) {
+                myNet -= resolved.sharePerPerson;
               }
             });
             return [pocket.id, { totalPaid, myNet }] as const;

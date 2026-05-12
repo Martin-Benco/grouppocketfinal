@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Pencil, Receipt, Trash2 } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { resolvePocketTransactionSplit } from "@/lib/pockets/transactionSplit";
 
 type PocketMember = {
   uid: string;
@@ -164,6 +165,7 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
   const activeMembers = pocket.members.filter(
     (m) => m.status === "accepted" || m.status === "pending",
   );
+  const activeMemberUids = activeMembers.map((m) => m.uid);
   const transactions = pocket.transactions ?? [];
   const filteredTransactions = activeTagFilter
     ? transactions.filter((tx) => tx.tag === activeTagFilter)
@@ -178,8 +180,16 @@ export function PocketTransactionsScreen({ pocketId }: { pocketId: string }) {
         return assigned.length === 0 || assigned.includes(member.uid);
       })
     : [];
+  const selectedSplitResolved = selectedTx
+    ? resolvePocketTransactionSplit({
+        amount: selectedTx.amount,
+        payerUid: selectedTx.payerUid,
+        splitAssignedUids: selectedTx.splitAssignedUids,
+        acceptedMemberUids: activeMemberUids,
+      })
+    : null;
   const amountPerDebtor =
-    selectedTx && selectedDebtors.length > 0 ? selectedTx.amount / selectedDebtors.length : 0;
+    selectedSplitResolved && selectedDebtors.length > 0 ? selectedSplitResolved.sharePerPerson : 0;
   const payerDisplay =
     selectedTxPayer?.fullName || selectedTxPayer?.email || "Platiteľ";
   const isSelectedTxPayout = selectedTx ? isPayoutTransaction(selectedTx) : false;

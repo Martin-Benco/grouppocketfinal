@@ -119,9 +119,6 @@ export class QuicksplitsService {
     return [...participants].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')).map((p) => p.id);
   }
 
-  /**
-   * Rozdelí sumu položky medzi konzumentov; poradie pri zvyšných centoch podľa poradia v split zozname.
-   */
   private allocateItemAmongConsumers(
     amountCents: number,
     consumerIds: string[],
@@ -978,14 +975,12 @@ export class QuicksplitsService {
         throw new ForbiddenException('Only payer can change payer IBAN');
       }
     } else {
-      if (selfFirebase) {
-        // ok
-      } else if (this.verifyJoin(data, joinToken)) {
-        await this.assertParticipantSecret(splitId, participantId, participantSecret);
-      } else if (adminToken && this.verifyAdmin(data, adminToken)) {
-        // tvorca môže pomôcť ostatným (nie platiteľovi)
-      } else {
-        throw new ForbiddenException('Payment details update denied');
+      if (!selfFirebase) {
+        if (this.verifyJoin(data, joinToken)) {
+          await this.assertParticipantSecret(splitId, participantId, participantSecret);
+        } else if (!adminToken || !this.verifyAdmin(data, adminToken)) {
+          throw new ForbiddenException('Payment details update denied');
+        }
       }
     }
 

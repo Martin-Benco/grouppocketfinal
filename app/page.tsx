@@ -64,9 +64,6 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
           profileImageUrl: data.profileImageUrl || null,
         });
       } catch (error: any) {
-        if (error.message?.includes('Backend server')) {
-          console.warn('⚠️ Backend is not running:', error.message);
-        }
         setUserData({
           phoneNumber: null,
           residence: null,
@@ -85,7 +82,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   if (loading || isPendingNewUser || dataLoading) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="text-muted-foreground">Načítavam…</div>
       </div>
     );
   }
@@ -95,10 +92,10 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
       <div className="bg-background w-full">
         <div className="max-w-screen-sm mx-auto w-full px-5 pt-8 pb-0">
           <h1 className="text-3xl font-bold text-foreground mb-2 text-center">
-            {isSignUp ? "Sign up" : "Sign in"}
+            {isSignUp ? "Registrácia" : "Prihlásenie"}
           </h1>
           <p className="text-foreground text-center mb-6">
-            {isSignUp ? "Create your GroupPocket account" : "Welcome back to GroupPocket"}
+            {isSignUp ? "Vytvorte si účet GroupPocket" : "Vitajte späť v GroupPocket"}
           </p>
           {error && (
             <div className="mb-4 p-3 bg-muted border border-muted rounded-lg text-sm text-foreground">
@@ -123,7 +120,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
             </div>
             <div className="relative flex justify-center text-sm">
               <span className="px-4 bg-background text-foreground">
-                or
+                alebo
               </span>
             </div>
           </div>
@@ -150,8 +147,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   const bankAccount = userData?.iban || null;
   const location = userData?.residence || null;
   const collectedAmount = 0;
-  
-  // Check if user has password provider
+
   const hasPassword = user.providerData.some(provider => provider.providerId === "password");
 
   const handleProfileImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,12 +155,12 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
     if (!file || !user || !storage) return;
 
     if (!file.type.startsWith("image/")) {
-      setError("Please select an image");
+      setError("Vyberte obrázok");
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setError("Image is too large (max 5MB)");
+      setError("Obrázok je príliš veľký (max. 5 MB)");
       return;
     }
 
@@ -193,7 +189,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
         };
       });
     } catch (error: any) {
-      setError("Error uploading image");
+      setError("Nahrávanie obrázka zlyhalo");
     } finally {
       setSaving(false);
       if (e.target) {
@@ -244,7 +240,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
       setEditingField(null);
       setEditValue("");
     } catch (error: any) {
-      setError(error.message || "Error saving data");
+      setError(error.message || "Ukladanie zlyhalo");
     } finally {
       setSaving(false);
     }
@@ -252,22 +248,22 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
 
   const handlePasswordChange = async () => {
     if (!newPassword || !confirmPassword) {
-      setError("Fill in all fields");
+      setError("Vyplňte všetky polia");
       return;
     }
 
     if (hasPassword && !currentPassword) {
-      setError("Enter current password");
+      setError("Zadajte súčasné heslo");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError("New passwords do not match");
+      setError("Nové heslá sa nezhodujú");
       return;
     }
 
     if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters");
+      setError("Heslo musí mať aspoň 6 znakov");
       return;
     }
 
@@ -284,7 +280,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
       setNewPassword("");
       setConfirmPassword("");
         } catch (error: any) {
-          setError(error.message || "Error changing password");
+          setError(error.message || "Zmena hesla zlyhala");
     } finally {
       setSaving(false);
     }
@@ -293,13 +289,13 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   const getModalTitle = () => {
     switch (editingField) {
       case "fullName":
-        return userData?.fullName ? "Edit name" : "Add name";
+        return userData?.fullName ? "Upraviť meno" : "Pridať meno";
       case "phoneNumber":
-        return userData?.phoneNumber ? "Edit phone number" : "Add phone number";
+        return userData?.phoneNumber ? "Upraviť telefón" : "Pridať telefón";
       case "iban":
-        return userData?.iban ? "Edit IBAN" : "Add IBAN";
+        return userData?.iban ? "Upraviť IBAN" : "Pridať IBAN";
       case "residence":
-        return userData?.residence ? "Edit residence" : "Add residence";
+        return userData?.residence ? "Upraviť pobyt" : "Pridať pobyt";
       default:
         return "";
     }
@@ -308,7 +304,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
   const getModalPlaceholder = () => {
     switch (editingField) {
       case "fullName":
-        return "Full name";
+        return "Celé meno";
       case "phoneNumber":
         return "+421 912 345 678";
       case "iban":
@@ -339,13 +335,13 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 onChange={(e) => setEditValue(e.target.value)}
                 className="w-full h-14 px-4 pr-12 bg-background border border-foreground/20 rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none cursor-pointer"
               >
-                <option value="">Select country</option>
-                <option value="Slovensko">Slovakia</option>
-                <option value="Česko">Czechia</option>
-                <option value="Poľsko">Poland</option>
-                <option value="Anglicko">England</option>
-                <option value="Rakúsko">Austria</option>
-                <option value="Maďarsko">Hungary</option>
+                <option value="">Vyberte krajinu</option>
+                <option value="Slovensko">Slovensko</option>
+                <option value="Česko">Česko</option>
+                <option value="Poľsko">Poľsko</option>
+                <option value="Anglicko">Anglicko</option>
+                <option value="Rakúsko">Rakúsko</option>
+                <option value="Maďarsko">Maďarsko</option>
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-foreground/60 pointer-events-none" />
             </div>
@@ -369,14 +365,14 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
               }}
               disabled={saving}
             >
-              Cancel
+              Zrušiť
             </Button>
             <Button
               className="flex-1 h-12 bg-primary hover:bg-primary/90"
               onClick={handleSave}
               disabled={saving || !editValue.trim()}
             >
-              {saving ? "Saving..." : "Save"}
+              {saving ? "Ukladám…" : "Uložiť"}
             </Button>
           </div>
         </div>
@@ -391,7 +387,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
           setConfirmPassword("");
           setError(null);
         }}
-        title={hasPassword ? "Change password" : "Add password"}
+        title={hasPassword ? "Zmeniť heslo" : "Pridať heslo"}
       >
         <div className="space-y-4">
           {error && (
@@ -405,7 +401,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 type={showCurrentPassword ? "text" : "password"}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Current password"
+                placeholder="Súčasné heslo"
                 className="w-full h-14 px-4 pr-12 bg-background border border-foreground/20 rounded-lg text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <button
@@ -426,7 +422,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
               type={showNewPassword ? "text" : "password"}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New password"
+              placeholder="Nové heslo"
               className="w-full h-14 px-4 pr-12 bg-background border border-foreground/20 rounded-lg text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary"
             />
             <button
@@ -446,7 +442,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
               type={showConfirmPassword ? "text" : "password"}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm new password"
+              placeholder="Potvrďte nové heslo"
               className="w-full h-14 px-4 pr-12 bg-background border border-foreground/20 rounded-lg text-foreground placeholder:text-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary"
             />
             <button
@@ -474,14 +470,14 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
               }}
               disabled={saving}
             >
-              Cancel
+              Zrušiť
             </Button>
             <Button
               className="flex-1 h-12 bg-primary hover:bg-primary/90"
               onClick={handlePasswordChange}
               disabled={saving || (hasPassword && !currentPassword) || !newPassword || !confirmPassword}
             >
-              {saving ? "Saving..." : hasPassword ? "Change password" : "Add password"}
+              {saving ? "Ukladám…" : hasPassword ? "Zmeniť heslo" : "Pridať heslo"}
             </Button>
           </div>
         </div>
@@ -490,11 +486,11 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
       <Modal
         isOpen={logoutModalOpen && isAccountScreenActive}
         onClose={() => setLogoutModalOpen(false)}
-        title="Sign out"
+        title="Odhlásiť sa"
       >
         <div className="space-y-4">
           <p className="text-foreground">
-            Are you sure you want to sign out?
+            Naozaj sa chcete odhlásiť?
           </p>
           <div className="flex gap-3">
             <Button
@@ -502,7 +498,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
               className="flex-1 h-12"
               onClick={() => setLogoutModalOpen(false)}
             >
-              Cancel
+              Zrušiť
             </Button>
             <Button
               className="flex-1 h-12 bg-primary hover:bg-primary/90"
@@ -511,7 +507,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 await signOut();
               }}
             >
-              Sign out
+              Odhlásiť sa
             </Button>
           </div>
         </div>
@@ -520,13 +516,13 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
       <div className="min-h-screen bg-background w-full">
         <div className="max-w-screen-sm mx-auto px-5 py-6 space-y-8">
         <div>
-          <h1 className="text-lg font-bold text-foreground mb-4">Profile</h1>
+          <h1 className="text-lg font-bold text-foreground mb-4">Profil</h1>
           <div className="flex items-center gap-4 mb-6">
             <label htmlFor="profile-image-upload" className="cursor-pointer">
               {userData?.profileImageUrl ? (
                 <img
                   src={userData.profileImageUrl}
-                  alt="Profile image"
+                  alt="Profilová fotka"
                   className="w-20 h-20 rounded-full object-cover"
                 />
               ) : (
@@ -537,10 +533,10 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
             </label>
             <div className="flex-1">
               <h2 className="text-3xl font-bold text-foreground mb-1">
-                {displayName || "Hi"}
+                {displayName || "Ahoj"}
               </h2>
               <p className="text-primary text-sm">
-                Collected {collectedAmount}€
+                Nazbierané {collectedAmount} €
               </p>
             </div>
           </div>
@@ -552,14 +548,14 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 {displayName ? (
                   <span className="text-foreground">{displayName}</span>
                 ) : (
-                  <span className="text-muted-foreground">Name</span>
+                  <span className="text-muted-foreground">Meno</span>
                 )}
               </div>
               <button 
                 onClick={() => handleEditClick("fullName")}
                 className="text-primary text-sm font-medium"
               >
-                {displayName ? "Edit" : "Add"}
+                {displayName ? "Upraviť" : "Pridať"}
               </button>
             </div>
             
@@ -569,14 +565,14 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 {phoneNumber ? (
                   <span className="text-foreground">{phoneNumber}</span>
                 ) : (
-                  <span className="text-muted-foreground">Phone number</span>
+                  <span className="text-muted-foreground">Telefón</span>
                 )}
               </div>
               <button 
                 onClick={() => handleEditClick("phoneNumber")}
                 className="text-primary text-sm font-medium"
               >
-                {phoneNumber ? "Edit" : "Add"}
+                {phoneNumber ? "Upraviť" : "Pridať"}
               </button>
             </div>
             
@@ -586,7 +582,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 {email ? (
                   <span className="text-foreground">{email}</span>
                 ) : (
-                  <span className="text-muted-foreground">Email</span>
+                  <span className="text-muted-foreground">E-mail</span>
                 )}
               </div>
             </div>
@@ -604,7 +600,7 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 onClick={() => handleEditClick("iban")}
                 className="text-primary text-sm font-medium"
               >
-                {bankAccount ? "Edit" : "Add"}
+                {bankAccount ? "Upraviť" : "Pridať"}
               </button>
             </div>
             
@@ -614,20 +610,20 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
                 {location ? (
                   <span className="text-foreground">{location}</span>
                 ) : (
-                  <span className="text-muted-foreground">Location</span>
+                  <span className="text-muted-foreground">Krajina pobytu</span>
                 )}
               </div>
               <button 
                 onClick={() => handleEditClick("residence")}
                 className="text-primary text-sm font-medium"
               >
-                {location ? "Edit" : "Add"}
+                {location ? "Upraviť" : "Pridať"}
               </button>
             </div>
             
             <label htmlFor="profile-image-upload" className="cursor-pointer">
               <div className="flex items-center justify-between py-4">
-                <span className="text-foreground">Change profile photo</span>
+                <span className="text-foreground">Zmeniť profilovú fotku</span>
                 <ChevronRight className="w-5 h-5 text-primary" />
               </div>
             </label>
@@ -643,30 +639,30 @@ function AccountScreen({ onNewUser, isPendingNewUser }: { onNewUser?: (isNew: bo
         </div>
 
         <div>
-          <h2 className="text-lg font-bold text-foreground mb-4">Personalization</h2>
+          <h2 className="text-lg font-bold text-foreground mb-4">Prispôsobenie</h2>
           <div className="space-y-0">
             <div className="flex items-center justify-between py-4">
-              <span className="text-foreground">Language</span>
-              <span className="text-primary">English</span>
+              <span className="text-foreground">Jazyk</span>
+              <span className="text-primary">Slovenčina</span>
             </div>
           </div>
         </div>
 
         <div>
-          <h2 className="text-lg font-bold text-foreground mb-4">Security</h2>
+          <h2 className="text-lg font-bold text-foreground mb-4">Zabezpečenie</h2>
           <div className="space-y-0">
             <button 
               className="w-full flex items-center justify-between py-4 border-b border-foreground/10"
               onClick={() => setPasswordModalOpen(true)}
             >
-              <span className="text-foreground">{hasPassword ? "Change password" : "Add password"}</span>
+              <span className="text-foreground">{hasPassword ? "Zmeniť heslo" : "Pridať heslo"}</span>
               <ChevronRight className="w-5 h-5 text-primary" />
             </button>
             <button 
               className="w-full flex items-center justify-between py-4"
               onClick={() => setLogoutModalOpen(true)}
             >
-              <span className="text-foreground">Sign out</span>
+              <span className="text-foreground">Odhlásiť sa</span>
               <ChevronRight className="w-5 h-5 text-primary" />
             </button>
           </div>
@@ -747,7 +743,6 @@ function HomeContent() {
     }
   }, [user, pendingNewUser, pendingEmail, showRegistrationFlow]);
 
-  // Presmerovanie na účet po dokončení registrácie
   useEffect(() => {
     if (shouldNavigateToAccount && !showRegistrationFlow) {
       setActiveTab("ucet");
@@ -776,7 +771,7 @@ function HomeContent() {
       
       await api.users.update(user.uid, updateData);
     } catch (error: any) {
-      const message = error?.message || "Failed to save registration step.";
+      const message = error?.message || "Krok registrácie sa nepodarilo uložiť.";
       setRegistrationError(message);
       throw new Error(message);
     }
@@ -801,11 +796,10 @@ function HomeContent() {
 
       await api.users.update(user.uid, userData);
     } catch (error: any) {
-      setRegistrationError(error?.message || "Failed to complete registration. Please try again.");
+      setRegistrationError(error?.message || "Registráciu sa nepodarilo dokončiť. Skúste to znova.");
       return;
     }
     
-    // Nastaviť flag, že sa má presmerovať na účet
     setShouldNavigateToAccount(true);
     
     setShowRegistrationFlow(false);
@@ -860,9 +854,9 @@ function HomeContent() {
 
       <div className="hidden h-screen bg-background md:flex items-center justify-center px-6">
         <div className="max-w-md rounded-2xl border border-foreground/15 bg-card p-8 text-center">
-          <h1 className="text-2xl font-bold text-foreground">Available on mobile only</h1>
+          <h1 className="text-2xl font-bold text-foreground">Len v mobilnej aplikácii</h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            GroupPocket is currently optimized for mobile devices. Open the app on your phone.
+            GroupPocket je teraz optimalizovaný pre telefóny. Otvorte stránku v prehliadači v telefóne.
           </p>
         </div>
       </div>
@@ -875,7 +869,7 @@ export default function Home() {
     <Suspense
       fallback={
         <div className="min-h-screen bg-background w-full flex items-center justify-center">
-          <div className="text-muted-foreground">Loading...</div>
+          <div className="text-muted-foreground">Načítavam…</div>
         </div>
       }
     >

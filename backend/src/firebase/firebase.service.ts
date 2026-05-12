@@ -11,30 +11,24 @@ export class FirebaseService implements OnModuleInit {
   onModuleInit() {
     if (!admin.apps.length) {
       try {
-        // Možnosť 1: Použitie environment variable (pre produkciu)
         if (process.env.FIREBASE_SERVICE_ACCOUNT) {
           const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
           admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
           });
-        }
-        // Možnosť 2: Použitie JSON súboru (pre development)
-        else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+        } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
           const serviceAccountPath = path.resolve(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
           const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
           admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
           });
-        }
-        // Možnosť 3: Automatické nájdenie service-account.json v backend/ adresári
-        else {
-          // Hľadáme v backend/ adresári (2 úrovne hore od src/firebase/)
+        } else {
           const serviceAccountPath = path.resolve(__dirname, '../../service-account.json');
-          
+
           if (!fs.existsSync(serviceAccountPath)) {
             throw new Error(`File not found: ${serviceAccountPath}`);
           }
-          
+
           const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
           admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
@@ -45,7 +39,6 @@ export class FirebaseService implements OnModuleInit {
           'Firebase service account not configured. ' +
           'Create service-account.json in backend/ directory or set FIREBASE_SERVICE_ACCOUNT environment variable. ' +
           `Error: ${error.message}`;
-        console.error(this.initError);
       }
     }
 

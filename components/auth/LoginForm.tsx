@@ -54,7 +54,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
 
   const handleForgotPassword = async () => {
     if (!resetEmail) {
-      setResetMessage("Enter your email");
+      setResetMessage("Zadajte e-mail");
       return;
     }
 
@@ -62,9 +62,9 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
       setIsResetting(true);
       setResetMessage(null);
       await resetPassword(resetEmail);
-      setResetMessage("Password reset email sent. Check your inbox.");
+      setResetMessage("E-mail na obnovenie hesla bol odoslaný. Skontrolujte schránku.");
     } catch (error: any) {
-      setResetMessage(error.message || "Failed to send email");
+      setResetMessage(error.message || "E-mail sa nepodarilo odoslať");
     } finally {
       setIsResetting(false);
     }
@@ -86,7 +86,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
         <div className="relative">
           <input
             type={showPassword ? "text" : "password"}
-            placeholder="Password"
+            placeholder="Heslo"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -114,7 +114,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
               }}
               className="text-primary text-sm font-medium"
             >
-              Forgot password?
+              Zabudli ste heslo?
             </button>
           </div>
         )}
@@ -127,17 +127,17 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
         className="w-full h-14 text-base font-bold bg-primary hover:bg-primary/90 rounded-full"
         disabled={isLoading}
       >
-        {isSignUp ? "Sign up" : "Sign in"}
+        {isSignUp ? "Registrovať sa" : "Prihlásiť sa"}
       </Button>
       {!isSignUp && (
         <div className="text-center text-sm text-foreground">
-          <span>Don&apos;t have an account yet? </span>
+          <span>Ešte nemáte účet? </span>
           <button
             type="button"
             onClick={() => handleSignUpToggle(true)}
             className="text-primary font-medium"
           >
-            Sign up
+            Registrovať sa
           </button>
         </div>
       )}
@@ -147,7 +147,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           onClick={() => handleSignUpToggle(false)}
           className="w-full text-center text-primary text-sm font-medium"
         >
-          I already have an account
+          Už mám účet
         </button>
       )}
 
@@ -158,11 +158,11 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           setResetEmail("");
           setResetMessage(null);
         }}
-        title="Reset password"
+        title="Obnovenie hesla"
       >
         <div className="space-y-4">
           <p className="text-foreground text-sm">
-            Enter your email and we&apos;ll send you a password reset link.
+            Zadajte e-mail a pošleme vám odkaz na obnovenie hesla.
           </p>
           <input
             type="email"
@@ -173,7 +173,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
           />
           {resetMessage && (
             <div className={`p-3 rounded-lg text-sm ${
-              resetMessage.includes("sent") 
+              resetMessage.includes("odoslaný") 
                 ? "bg-green-500/10 border border-green-500/20 text-green-500"
                 : "bg-red-500/10 border border-red-500/20 text-red-500"
             }`}>
@@ -185,7 +185,7 @@ export function LoginForm({ onSuccess, onError, onSignUpChange }: LoginFormProps
             disabled={isResetting || !resetEmail}
             className="w-full h-12 bg-primary hover:bg-primary/90"
           >
-            {isResetting ? "Sending..." : "Send"}
+            {isResetting ? "Odosielam…" : "Odoslať"}
           </Button>
         </div>
       </Modal>

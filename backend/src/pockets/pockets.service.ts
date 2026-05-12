@@ -199,7 +199,7 @@ export class PocketsService {
       idx === targetIndex
         ? {
             ...member,
-            uid, // zjednotiť člena na aktuálneho používateľa
+            uid,
             email: member.email || requesterEmail || null,
             status,
           }
@@ -667,6 +667,16 @@ export class PocketsService {
       });
     });
 
+    return { success: true };
+  }
+
+  async deletePocketForOwner(pocketId: string, requesterUid: string) {
+    const { ref, data } = await this.readPocketOrThrow(pocketId);
+    const ownerUid = (data.ownerUid as string) || null;
+    if (!ownerUid || ownerUid !== requesterUid) {
+      throw new ForbiddenException('Vrecko môže vymazať len jeho tvorca.');
+    }
+    await ref.delete();
     return { success: true };
   }
 }

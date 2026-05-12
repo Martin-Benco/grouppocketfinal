@@ -5,6 +5,9 @@ export default function QuickSplitScreen() {
         <h1 className="text-xl font-bold text-foreground">
           QuickSplit
         </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Domovská obrazovka QuickSplitu — otvorte hlavnú stránku v telefóne pre plnú funkcionalitu.
+        </p>
       </div>
     </div>
   );

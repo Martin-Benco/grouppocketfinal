@@ -45,7 +45,6 @@ export class UpdateQuicksplitDto {
   @Max(10)
   targetParticipantCount?: number;
 
-  /** ID účastníka, ktorý je platiteľom (musí patriť do splitu) */
   @IsOptional()
   @IsString()
   @MinLength(8)
@@ -70,19 +69,16 @@ export class UpdateQuicksplitDto {
   @Type(() => QuicksplitSplitItemDto)
   splitItems?: QuicksplitSplitItemDto[];
 
-  /** Rozdelí kladný zostatok (total − súčet zadaných súm) rovnomerne medzi všetkých účastníkov. */
   @IsOptional()
   @IsBoolean()
   distributeRemainderEqually?: boolean;
 
-  /** Manuálne priradenie zostatku v režime „Každý svoju sumu“. */
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => QuicksplitRemainderAssignmentDto)
   remainderAssignments?: QuicksplitRemainderAssignmentDto[];
 
-  /** Hromadné nastavenie súm pre režim "Každý svoju sumu". */
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

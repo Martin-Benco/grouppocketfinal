@@ -35,7 +35,6 @@ function invalidatePocketCache() {
   }
 }
 
-/** URL pre EventSource (SSE) — tokeny v query, lebo EventSource nepodporuje vlastné hlavičky. */
 export function quicksplitStreamUrl(splitId: string, tokens: { joinToken?: string; adminToken?: string }) {
   const p = new URLSearchParams();
   if (tokens.adminToken) p.set('adminToken', tokens.adminToken);
@@ -303,6 +302,13 @@ export const api = {
       const result = await fetchWithAuth(`/pockets/${pocketId}/respond`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
+      });
+      invalidatePocketCache();
+      return result;
+    },
+    delete: async (pocketId: string) => {
+      const result = await fetchWithAuth(`/pockets/${encodeURIComponent(pocketId)}`, {
+        method: 'DELETE',
       });
       invalidatePocketCache();
       return result;

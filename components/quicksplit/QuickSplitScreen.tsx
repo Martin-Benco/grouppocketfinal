@@ -91,6 +91,25 @@ type BarcodeDetectorLike = {
 
 type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
 
+const QUICKSPLIT_FETCH_TIMEOUT_MS = 15_000;
+const QUICKSPLIT_FETCH_TIMEOUT_MSG =
+  "Načítanie QuickSplitu trvalo príliš dlho. Skontrolte internet a či beží backend, potom obnovte stránku.";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    promise
+      .then((v) => {
+        clearTimeout(timer);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+  });
+}
+
 function formatEur(cents: number) {
   return (cents / 100).toFixed(2).replace(".", ",") + " €";
 }
@@ -98,41 +117,62 @@ function formatEur(cents: number) {
 function formatTime(iso: string) {
   try {
     const d = new Date(iso);
-    return d.toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" });
+    return d.toLocaleString("sk-SK", { dateStyle: "short", timeStyle: "short" });
   } catch {
     return iso;
   }
 }
 
+function flowStepLabel(s: string): string {
+  const m: Record<string, string> = {
+    waiting: "čakanie",
+    splitting: "rozdeľovanie",
+    settlement: "platby",
+    closed: "uzavreté",
+  };
+  return m[s] || s;
+}
+
+function splitModeLabel(mode: string): string {
+  const m: Record<string, string> = {
+    equal: "rovnomerne",
+    custom_amounts: "podľa súm",
+    items: "položky",
+  };
+  return m[mode] || mode;
+}
+
 function formatActivity(a: ActivityView): string {
-  const name = a.actorDisplayName || "Someone";
+  const name = a.actorDisplayName || "Niekto";
   switch (a.type) {
     case "split_created":
-      return `Split created (${formatEur((a.meta.totalCents as number) || 0)})`;
+      return `Split vytvorený (${formatEur((a.meta.totalCents as number) || 0)})`;
     case "participant_joined":
-      return `${name} joined`;
+      return `${name} sa pripojil(a)`;
     case "amount_updated":
-      return `Amount changed to ${formatEur((a.meta.newCents as number) || 0)}`;
+      return `Suma zmenená na ${formatEur((a.meta.newCents as number) || 0)}`;
     case "payer_changed":
-      return `Payer: ${String(a.meta.previousPayerName || "?")} -> ${String(a.meta.newPayerName || "?")}`;
+      return `Platiteľ: ${String(a.meta.previousPayerName || "?")} → ${String(a.meta.newPayerName || "?")}`;
     case "payment_details_updated":
-      return a.meta.isPayer ? `${name} updated payer IBAN` : `${name} updated payment details`;
+      return a.meta.isPayer
+        ? `${name} upravil(a) IBAN platiteľa`
+        : `${name} upravil(a) platobné údaje`;
     case "marked_paid":
-      return `${name} marked payment as paid`;
+      return `${name} označil(a) platbu ako zaplatenú`;
     case "marked_unpaid":
-      return `${name} unmarked payment`;
+      return `${name} zrušil(a) označenie platby`;
     case "flow_step_changed":
-      return `Step: ${String(a.meta.from)} -> ${String(a.meta.to)}`;
+      return `Krok: ${flowStepLabel(String(a.meta.from))} → ${flowStepLabel(String(a.meta.to))}`;
     case "split_mode_changed":
-      return `Split mode: ${String(a.meta.mode)}`;
+      return `Spôsob delenia: ${splitModeLabel(String(a.meta.mode))}`;
     case "split_items_updated":
-      return "Items were updated";
+      return "Položky boli upravené";
     case "participant_claim_updated":
-      return `${name} updated their amount`;
+      return `${name} upravil(a) svoju sumu`;
     case "remainder_distributed":
-      return `Remainder distributed (${formatEur((a.meta.remainderCents as number) || 0)})`;
+      return `Zostatok rozdelený (${formatEur((a.meta.remainderCents as number) || 0)})`;
     case "splitting_finalized":
-      return "Split finalized";
+      return "Rozdelenie bolo dokončené";
     default:
       return a.type;
   }
@@ -228,13 +268,21 @@ export function QuickSplitScreen() {
       ? null
       : err;
 
-  const loadSplit = useCallback(async (splitId: string) => {
+  const loadSplit = useCallback(async (splitId: string, options?: { silent?: boolean }) => {
     const s = readQsSession(splitId);
-    const data = (await api.quicksplits.get(splitId, {
+    const run = api.quicksplits.get(splitId, {
       joinToken: s.joinToken || undefined,
       adminToken: s.adminToken || undefined,
-    })) as QuicksplitView;
-    setSplit(data);
+    }) as Promise<QuicksplitView>;
+    try {
+      const data = options?.silent
+        ? await run
+        : await withTimeout(run, QUICKSPLIT_FETCH_TIMEOUT_MS, QUICKSPLIT_FETCH_TIMEOUT_MSG);
+      setSplit(data);
+    } catch (e) {
+      if (options?.silent) return;
+      throw e;
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -259,7 +307,11 @@ export function QuickSplitScreen() {
       await loadSplit(id);
     } catch (e: unknown) {
       setSplit(null);
-      setErr(e instanceof Error ? e.message : "Loading error");
+      const msg = e instanceof Error ? e.message : "Chyba pri načítaní";
+      setErr(msg);
+      if (msg === QUICKSPLIT_FETCH_TIMEOUT_MSG) {
+        clearQsSession(id);
+      }
     } finally {
       setLoading(false);
     }
@@ -300,7 +352,6 @@ export function QuickSplitScreen() {
     };
   }, [split, joinUrl, split?.flowStep]);
 
-  /** SSE — live stav splitu */
   useEffect(() => {
     if (!split?.id) return;
     const s = readQsSession(split.id);
@@ -315,7 +366,7 @@ export function QuickSplitScreen() {
         const next = JSON.parse(ev.data as string) as QuicksplitView;
         setSplit(next);
       } catch {
-        /* ignore */
+        void 0;
       }
     };
     es.addEventListener("message", onMessage as EventListener);
@@ -329,14 +380,13 @@ export function QuickSplitScreen() {
     };
   }, [split?.id]);
 
-  /** Fallback polling in settlement step if SSE drops. */
   useEffect(() => {
     if (!split?.id || split.flowStep !== "settlement") return;
     const s = readQsSession(split.id);
     if (!s.adminToken) return;
     const interval = setInterval(() => {
-      void loadSplit(split.id).catch(() => {
-        /* stay silent to avoid UI noise on brief outages */
+      void loadSplit(split.id, { silent: true }).catch(() => {
+        void 0;
       });
     }, 2500);
     return () => clearInterval(interval);
@@ -355,7 +405,7 @@ export function QuickSplitScreen() {
     if (!split || split.flowStep !== "closed") return;
     clearQsSession(split.id);
     setSplit(null);
-    setErr("Split was closed by the admin.");
+    setErr("Split uzatvoril správca.");
     const t = setTimeout(() => setErr(null), 2500);
     return () => clearTimeout(t);
   }, [split]);
@@ -469,7 +519,7 @@ export function QuickSplitScreen() {
     setErr(null);
     const cents = parseEuroToCents(createTotal) ?? -1;
     if (cents < 0) {
-      setErr("Enter a valid total amount.");
+      setErr("Zadajte platnú celkovú sumu.");
       return;
     }
     setLoading(true);
@@ -495,7 +545,7 @@ export function QuickSplitScreen() {
       setCreateCount(4);
       await loadSplit(created.splitId);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     } finally {
       setLoading(false);
     }
@@ -508,7 +558,7 @@ export function QuickSplitScreen() {
       const v = (await api.quicksplits.update(split.id, { flowStep: "splitting" }, adminHeaders())) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -519,7 +569,7 @@ export function QuickSplitScreen() {
       const v = (await api.quicksplits.update(split.id, { splitMode: mode }, adminHeaders())) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -534,7 +584,7 @@ export function QuickSplitScreen() {
           const v = (await api.quicksplits.update(split.id, { totalCents: cents }, adminHeaders())) as QuicksplitView;
           setSplit(v);
         } catch (e: unknown) {
-          setErr(e instanceof Error ? e.message : "Error");
+          setErr(e instanceof Error ? e.message : "Chyba");
         }
       })();
     }, 350);
@@ -546,7 +596,7 @@ export function QuickSplitScreen() {
       const v = (await api.quicksplits.update(split.id, { payerParticipantId }, adminHeaders())) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -565,7 +615,7 @@ export function QuickSplitScreen() {
           )) as QuicksplitView;
           setSplit(v);
         } catch (e: unknown) {
-          setErr(e instanceof Error ? e.message : "Error");
+          setErr(e instanceof Error ? e.message : "Chyba");
         }
       })();
     }, 300);
@@ -579,7 +629,7 @@ export function QuickSplitScreen() {
     const selectedPayerIban = selectedPayer?.iban?.trim() || "";
     const hasPayerIban = Boolean(selectedPayerIban || fallbackIban);
     if (!hasPayerIban) {
-      setErr("The selected payer must have IBAN filled before continuing.");
+      setErr("Vybraný platiteľ musí mať vyplnený IBAN, aby ste mohli pokračovať.");
       return;
     }
     setErr(null);
@@ -587,7 +637,7 @@ export function QuickSplitScreen() {
       const v = (await api.quicksplits.update(split.id, { flowStep: "settlement" }, adminHeaders())) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -608,7 +658,7 @@ export function QuickSplitScreen() {
       )) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -630,7 +680,7 @@ export function QuickSplitScreen() {
       )) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -645,7 +695,7 @@ export function QuickSplitScreen() {
       )) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -666,7 +716,7 @@ export function QuickSplitScreen() {
       )) as QuicksplitView;
       setSplit(v);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -686,7 +736,7 @@ export function QuickSplitScreen() {
           )) as QuicksplitView;
           setSplit(v);
         } catch (e: unknown) {
-          setErr(e instanceof Error ? e.message : "Error");
+          setErr(e instanceof Error ? e.message : "Chyba");
         }
       })();
     }, 600);
@@ -722,7 +772,7 @@ export function QuickSplitScreen() {
       }
       setSplit(updated);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Error");
+      setErr(e instanceof Error ? e.message : "Chyba");
     }
   };
 
@@ -750,7 +800,7 @@ export function QuickSplitScreen() {
       const splitId = u.searchParams.get("splitId");
       const joinToken = u.searchParams.get("joinToken");
       if (!splitId || !joinToken) {
-        setScannerError("QR code does not contain valid join data.");
+        setScannerError("QR kód neobsahuje platné údaje na pripojenie.");
         return;
       }
       stopScanner();
@@ -759,7 +809,7 @@ export function QuickSplitScreen() {
         window.location.href = `/join?splitId=${encodeURIComponent(splitId)}&joinToken=${encodeURIComponent(joinToken)}`;
       }
     } catch {
-      setScannerError("Failed to read QR code.");
+      setScannerError("QR kód sa nepodarilo prečítať.");
     }
   }, [stopScanner]);
 
@@ -804,13 +854,13 @@ export function QuickSplitScreen() {
               return;
             }
           } catch {
-            /* ignore detect errors */
+            void 0;
           }
           scannerTimerRef.current = setTimeout(() => void tick(), 350);
         };
         await tick();
       } catch {
-        setScannerError("Failed to open camera. Check camera permissions.");
+        setScannerError("Kameru sa nepodarilo spustiť. Skontrolujte oprávnenia.");
       }
     };
     void start();
@@ -884,7 +934,7 @@ export function QuickSplitScreen() {
 
   const selectedPayer =
     split?.participants.find((p) => p.id === split.payerParticipantId) || null;
-  const selectedPayerName = selectedPayer?.displayName || "Select payer";
+  const selectedPayerName = selectedPayer?.displayName || "Vyberte platiteľa";
   const selectedPayerLocalIban = selectedPayer?.iban?.trim() || "";
   const selectedPayerResolvedIban = split?.payerIban?.trim() || selectedPayerLocalIban;
   const selectedPayerHasIban = Boolean(selectedPayerResolvedIban);
@@ -931,7 +981,7 @@ export function QuickSplitScreen() {
           await loadSplit(split.id);
         } catch (e: unknown) {
           setPayerMetaSaveState("error");
-          setErr(e instanceof Error ? e.message : "Failed to save payer details.");
+          setErr(e instanceof Error ? e.message : "Nepodarilo sa uložiť údaje platiteľa.");
         }
       })();
     }, 500);
@@ -955,7 +1005,7 @@ export function QuickSplitScreen() {
   if (loading && !split) {
     return (
       <div className="min-h-screen bg-background w-full flex items-center justify-center">
-        <p className="text-muted-foreground">Loading QuickSplit...</p>
+        <p className="text-muted-foreground">Načítavam QuickSplit…</p>
       </div>
     );
   }
@@ -967,9 +1017,9 @@ export function QuickSplitScreen() {
           <h1 className="text-xl font-bold text-foreground">QuickSplit</h1>
           {visibleErr && <p className="text-sm text-red-400">{visibleErr}</p>}
           <div className="rounded-2xl border border-foreground/15 bg-[#0e0e10] p-4 space-y-4">
-            <h2 className="text-xl font-bold text-foreground">New QuickSplit</h2>
+            <h2 className="text-xl font-bold text-foreground">Nový QuickSplit</h2>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Total bill amount</label>
+              <label className="text-xs text-muted-foreground block mb-1">Celková suma účtu</label>
               <input
                 value={createTotal}
                 onChange={(e) => setCreateTotal(sanitizeMoneyInput(e.target.value))}
@@ -979,7 +1029,7 @@ export function QuickSplitScreen() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-2">People count (including you)</label>
+              <label className="text-xs text-muted-foreground block mb-2">Počet ľudí (vrátane vás)</label>
               <div className="flex items-center justify-center gap-4">
                 <Button
                   type="button"
@@ -1004,25 +1054,25 @@ export function QuickSplitScreen() {
               <p className="text-xs text-muted-foreground mt-2 text-center">Rozsah 2–10</p>
             </div>
             <Button className="w-full h-12 bg-primary" onClick={() => void handleCreate()}>
-              Create
+              Vytvoriť
             </Button>
           </div>
           <Button type="button" variant="outline" className="w-full h-12 rounded-xl gap-2" onClick={() => setScannerOpen(true)}>
             <Camera className="w-4 h-4" />
-            Join (scan QR)
+            Pripojiť sa (naskenovať QR)
           </Button>
-          <Modal isOpen={scannerOpen} onClose={() => setScannerOpen(false)} title="Join via QR">
+          <Modal isOpen={scannerOpen} onClose={() => setScannerOpen(false)} title="Pripojiť cez QR">
             <div className="space-y-3">
               <div className="rounded-xl border border-foreground/20 overflow-hidden bg-black/40">
                 <video ref={videoRef} className="w-full aspect-square object-cover" autoPlay muted playsInline />
               </div>
               {!scannerSupported && (
                 <p className="text-xs text-amber-400">
-                  Your browser doesn&apos;t support direct QR scanning. Open the join link manually.
+                  Váš prehliadač nepodporuje priame skenovanie QR. Otvorte pozvánku ručne cez odkaz.
                 </p>
               )}
               {scannerError && <p className="text-xs text-red-400">{scannerError}</p>}
-              <p className="text-xs text-muted-foreground text-center">Point your camera at the invite QR code.</p>
+              <p className="text-xs text-muted-foreground text-center">Namierte kameru na QR kód z pozvánky.</p>
             </div>
           </Modal>
         </div>
@@ -1048,7 +1098,7 @@ export function QuickSplitScreen() {
         setSplit(v);
         return;
       } catch (e: unknown) {
-        setErr(e instanceof Error ? e.message : "Error");
+        setErr(e instanceof Error ? e.message : "Chyba");
         return;
       }
     }
@@ -1109,7 +1159,7 @@ export function QuickSplitScreen() {
         )) as QuicksplitView;
         setSplit(v);
       } catch (e: unknown) {
-        setErr(e instanceof Error ? e.message : "Error");
+        setErr(e instanceof Error ? e.message : "Chyba");
         return;
       }
     }
@@ -1160,9 +1210,9 @@ export function QuickSplitScreen() {
         {visibleErr && <p className="text-sm text-red-400">{visibleErr}</p>}
 
         <section className="space-y-3 rounded-2xl border border-foreground/15 bg-[#0e0e10] p-4 transition-all duration-300">
-          <h2 className="text-base font-semibold text-foreground">Split setup</h2>
+          <h2 className="text-base font-semibold text-foreground">Nastavenie splitu</h2>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">Total amount</label>
+            <label className="text-xs text-muted-foreground block mb-1">Celková suma</label>
             <input
               value={splitTotalDraft}
               onChange={(e) => {
@@ -1176,7 +1226,7 @@ export function QuickSplitScreen() {
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">People count</label>
+            <label className="text-xs text-muted-foreground block mb-1">Počet ľudí</label>
             <div className="flex items-center justify-center gap-4">
               <Button
                 type="button"
@@ -1207,24 +1257,24 @@ export function QuickSplitScreen() {
               </Button>
             </div>
             {!canEditCreateSection && (
-              <p className="text-xs text-muted-foreground text-center mt-2">After you continue, this section becomes read-only.</p>
+              <p className="text-xs text-muted-foreground text-center mt-2">Po pokračovaní sa táto časť uzamkne len na čítanie.</p>
             )}
           </div>
         </section>
 
         <section className="space-y-4 rounded-2xl border border-foreground/15 bg-[#0e0e10] p-4 transition-all duration-300">
-          <h2 className="text-base font-semibold text-foreground">Waiting for members</h2>
+          <h2 className="text-base font-semibold text-foreground">Čakáme na členov</h2>
           <p className="text-sm text-muted-foreground">
-            Currently <span className="text-foreground font-semibold">{n}</span> of{" "}
-            <span className="text-foreground font-semibold">{target}</span> people.
+            Momentálne <span className="text-foreground font-semibold">{n}</span> z{" "}
+            <span className="text-foreground font-semibold">{target}</span> ľudí.
             {waitingLeft > 0 ? (
               <>
                 {" "}
-                Still waiting for <span className="text-primary font-semibold">{waitingLeft}</span>{" "}
-                {waitingLeft === 1 ? "user" : "users"}...
+                Ešte čakáme na <span className="text-primary font-semibold">{waitingLeft}</span>{" "}
+                {waitingLeft === 1 ? "osobu" : "osôb"}…
               </>
             ) : (
-              <span className="text-emerald-500 font-medium"> Everyone is connected.</span>
+              <span className="text-emerald-500 font-medium"> Všetci sú pripojení.</span>
             )}
           </p>
 
@@ -1232,13 +1282,13 @@ export function QuickSplitScreen() {
             <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4 shadow-[0_0_0_1px_rgba(139,92,246,0.08)]">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">All members are ready</p>
+                  <p className="text-sm font-semibold text-foreground">Všetci sú pripravení</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    You can move the split to the next step and choose split mode.
+                    Môžete prejsť na ďalší krok a zvoliť spôsob delenia účtu.
                   </p>
                 </div>
                 <span className="shrink-0 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-medium text-emerald-400">
-                  Ready
+                  Hotovo
                 </span>
               </div>
               <Button
@@ -1246,7 +1296,7 @@ export function QuickSplitScreen() {
                 className="w-full h-14 mt-4 rounded-2xl bg-primary text-primary-foreground text-base font-semibold shadow-lg shadow-primary/20"
                 onClick={() => void proceedToSplitting()}
               >
-                Continue
+                Pokračovať
               </Button>
             </div>
           )}
@@ -1254,7 +1304,7 @@ export function QuickSplitScreen() {
           <div className="rounded-2xl border border-foreground/15 p-4 space-y-3">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Users className="w-4 h-4" />
-              Connected members
+              Pripojení členovia
             </h3>
             <ul className="space-y-2">
               {Array.from({ length: target }).map((_, idx) => {
@@ -1267,14 +1317,14 @@ export function QuickSplitScreen() {
                         {p.displayName}
                         {p.id === myParticipantId ? " (ty)" : ""}
                       </span>
-                      <span className="text-muted-foreground text-xs">joined</span>
+                      <span className="text-muted-foreground text-xs">pripojený</span>
                     </li>
                   );
                 }
                 return (
                   <li key={`empty_${idx}`} className="text-sm text-muted-foreground flex items-center gap-2">
                     <span>⬜</span>
-                    <span>Waiting...</span>
+                    <span>Čaká sa…</span>
                   </li>
                 );
               })}
@@ -1283,16 +1333,15 @@ export function QuickSplitScreen() {
 
           {isWaitingStep && (
             <div className="rounded-2xl border border-foreground/15 p-4 flex flex-col items-center gap-3">
-              <p className="text-xs text-muted-foreground text-center">Scan QR or send link</p>
+              <p className="text-xs text-muted-foreground text-center">Naskenujte QR alebo pošlite odkaz</p>
               {qrDataUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrDataUrl} alt="QR code" className="rounded-xl border border-foreground/20" width={220} height={220} />
+                <img src={qrDataUrl} alt="QR kód" className="rounded-xl border border-foreground/20" width={220} height={220} />
               ) : (
                 <p className="text-sm text-muted-foreground">Generujem QR…</p>
               )}
               <Button type="button" className="w-full h-11 bg-primary gap-2" onClick={copyJoin}>
                 <Copy className="w-4 h-4" />
-                Copy link
+                Kopírovať odkaz
               </Button>
             </div>
           )}
@@ -1304,11 +1353,11 @@ export function QuickSplitScreen() {
                   className="w-full h-12 bg-primary text-primary-foreground"
                   onClick={() => void proceedToSplitting()}
                 >
-                  Continue{!allJoined ? " (early)" : ""}
+                  Pokračovať{!allJoined ? " (skôr)" : ""}
                 </Button>
                 {!allJoined && (
                   <p className="text-xs text-center text-muted-foreground">
-                    You can continue even if not everyone joined yet - others won&apos;t be able to join later.
+                    Môžete pokračovať aj bez všetkých účastníkov — neskôr sa už nebudú môcť pripojiť.
                   </p>
                 )}
               </div>
@@ -1319,11 +1368,11 @@ export function QuickSplitScreen() {
           <section className="space-y-5">
             {selectedPayerIsGuest && (
               <div className="space-y-2">
-                <label className="text-xs text-muted-foreground block">Payer name (optional)</label>
+                <label className="text-xs text-muted-foreground block">Meno platiteľa (voliteľné)</label>
                 <input
                   value={payerNameDraft}
                   onChange={(e) => setPayerNameDraft(e.target.value)}
-                  placeholder="How the name should appear"
+                  placeholder="Ako sa má zobraziť meno"
                   disabled={!canEditSelectedPayerIban}
                   className="w-full h-12 px-3 rounded-xl bg-background border border-foreground/20 text-foreground disabled:opacity-60"
                 />
@@ -1350,18 +1399,18 @@ export function QuickSplitScreen() {
                 }`}
               >
                 {selectedPayerHasIban
-                  ? `Payer IBAN: ${selectedPayerResolvedIban}`
-                  : "Payer has no IBAN set. Payment cannot continue without it."}
+                  ? `IBAN platiteľa: ${selectedPayerResolvedIban}`
+                  : "Platiteľ nemá zadaný IBAN. Bez neho nie je možné pokračovať v platbe."}
               </div>
               {selectedPayerIsGuest && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
                   <p className="text-xs text-foreground/75">
-                    The payer is a guest (not signed in).
+                    Platiteľ je hosť (nie je prihlásený).
                     {canEditSelectedPayerIban
-                      ? " Add your IBAN so others can pay. It saves automatically."
-                      : " Only the payer can add this IBAN in their own session."}
+                      ? " Doplňte svoj IBAN, aby vám ostatní vedeli poslať peniaze. Ukladá sa automaticky."
+                      : " IBAN môže v svojej relácii doplniť len samotný platiteľ."}
                   </p>
-                  <label className="text-xs text-muted-foreground block">Payer IBAN</label>
+                  <label className="text-xs text-muted-foreground block">IBAN platiteľa</label>
                   <input
                     value={payerIbanDraft}
                     onChange={(e) => setPayerIbanDraft(e.target.value.toUpperCase())}
@@ -1370,24 +1419,24 @@ export function QuickSplitScreen() {
                     className="w-full h-11 px-3 rounded-xl bg-background border border-foreground/20 text-foreground disabled:opacity-60"
                   />
                   {!payerIbanLooksValid && payerIbanDraft.trim().length > 0 && (
-                    <p className="text-xs text-amber-300">IBAN must have at least 15 characters.</p>
+                    <p className="text-xs text-amber-300">IBAN musí mať aspoň 15 znakov.</p>
                   )}
                   {canEditSelectedPayerIban && payerIbanLooksValid && (
                     <p className="text-xs text-foreground/65">
                       {payerMetaSaveState === "saving"
-                        ? "Saving changes..."
+                        ? "Ukladám zmeny…"
                         : payerMetaSaveState === "saved"
-                          ? "Changes saved."
+                          ? "Zmeny sú uložené."
                           : payerMetaSaveState === "error"
-                            ? "Failed to save changes."
-                            : "Changes are saved automatically."}
+                            ? "Zmeny sa nepodarilo uložiť."
+                            : "Zmeny sa ukladajú automaticky."}
                     </p>
                   )}
                 </div>
               )}
             </div>
             <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">Split mode</p>
+              <p className="text-xs text-muted-foreground">Spôsob delenia</p>
               <div className="relative">
                 <button
                   type="button"
@@ -1396,18 +1445,18 @@ export function QuickSplitScreen() {
                   className="w-full h-12 px-3 pr-10 rounded-xl bg-background border border-foreground/20 text-left text-foreground disabled:opacity-60"
                 >
                   {split.splitMode === "equal"
-                    ? "Equal"
+                    ? "Rovnomerne"
                     : split.splitMode === "custom_amounts"
                       ? customSplitEntryMode === "percent"
-                        ? "Percent"
-                        : "By amount"
-                      : "Select mode"}
+                        ? "Percentá"
+                        : "Podľa súm"
+                      : "Vyberte režim"}
                 </button>
                 <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/70" />
               </div>
             </div>
             <p className="text-xs text-foreground/60">
-              Configure split in the &quot;Split mode&quot; popup.
+              Delenie nastavíte v okne „Spôsob delenia“.
             </p>
           </section>
         )}
@@ -1416,10 +1465,10 @@ export function QuickSplitScreen() {
           <section className="space-y-6">
             {myParticipant && !myParticipant.isPayer && myParticipant.oweToPayerCents > 0 && !showPaymentSuccess && !showStepThreeStatus && (
               <div className="rounded-2xl border border-primary/30 bg-primary/5 p-6 space-y-4 text-center">
-                <p className="text-sm text-muted-foreground">You owe</p>
+                <p className="text-sm text-muted-foreground">Dlžíte</p>
                 <p className="text-4xl font-extrabold text-primary tabular-nums">{formatEur(myParticipant.oweToPayerCents)}</p>
                 <p className="text-lg text-foreground">
-                  to: <span className="font-bold">{split.payerDisplayName}</span>
+                  komu: <span className="font-bold">{split.payerDisplayName}</span>
                 </p>
                 <Button
                   type="button"
@@ -1427,14 +1476,14 @@ export function QuickSplitScreen() {
                   className="w-full h-14 bg-primary text-primary-foreground"
                   onClick={openPayMe}
                 >
-                  Pay
+                  Zaplatiť
                 </Button>
                 {payMeUrl ? (
                   <div className="space-y-3 text-left rounded-xl border border-foreground/10 bg-background/40 p-3">
                     <p className="text-xs text-muted-foreground text-center">
-                      If the banking app doesn&apos;t open, use the details below or open{" "}
+                      Ak sa banková aplikácia neotvorí, použite údaje nižšie alebo otvorte{" "}
                       <button type="button" onClick={openPayMe} className="text-primary underline underline-offset-2">
-                        payment in banking app
+                        platbu v banke
                       </button>
                       .
                     </p>
@@ -1448,7 +1497,7 @@ export function QuickSplitScreen() {
                             onClick={() => void copyPaymentValue(split.payerIban || "")}
                             className="shrink-0 text-xs text-primary underline underline-offset-2"
                           >
-                            Copy
+                            Kopírovať
                           </button>
                         </div>
                       </div>
@@ -1461,7 +1510,7 @@ export function QuickSplitScreen() {
                             onClick={() => void copyPaymentValue((myParticipant.oweToPayerCents / 100).toFixed(2))}
                             className="shrink-0 text-xs text-primary underline underline-offset-2"
                           >
-                            Copy
+                            Kopírovať
                           </button>
                         </div>
                       </div>
@@ -1469,7 +1518,7 @@ export function QuickSplitScreen() {
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    The payer still needs to add IBAN before payment can be opened.
+                    Platiteľ ešte musí doplniť IBAN, aby bolo možné spustiť platbu.
                   </p>
                 )}
                 {!myParticipant.markedPaidAt ? (
@@ -1480,11 +1529,11 @@ export function QuickSplitScreen() {
                     className="w-full h-11 border-foreground/20 bg-muted text-muted-foreground disabled:opacity-100 disabled:cursor-not-allowed"
                     onClick={() => void togglePaid(true)}
                   >
-                    Mark as paid
+                    Označiť ako zaplatené
                   </Button>
                 ) : (
                   <Button type="button" variant="outline" className="w-full h-12" onClick={() => void togglePaid(false)}>
-                    Unmark as paid
+                    Zrušiť označenie platby
                   </Button>
                 )}
               </div>
@@ -1500,16 +1549,16 @@ export function QuickSplitScreen() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-2xl font-bold text-foreground">Payment confirmed!</p>
-                  <p className="text-sm text-muted-foreground">{split.payerDisplayName} was notified</p>
+                  <p className="text-2xl font-bold text-foreground">Platba potvrdená!</p>
+                  <p className="text-sm text-muted-foreground">{split.payerDisplayName} dostal(a) upozornenie</p>
                 </div>
               </div>
             )}
 
             {showStepThreeStatus && myParticipant && !myParticipant.isPayer && (
               <div className="space-y-3">
-                <h2 className="text-base font-semibold text-foreground">Step 3: Split mode</h2>
-                <p className="text-sm text-muted-foreground">Payment status in this split</p>
+                <h2 className="text-base font-semibold text-foreground">Krok 3: Spôsob delenia</h2>
+                <p className="text-sm text-muted-foreground">Stav platieb v tomto splitte</p>
                 <div className="rounded-2xl border border-foreground/15 bg-[#0e0e10] p-4 space-y-2">
                   {split.participants
                     .filter((p) => !p.isPayer)
@@ -1519,7 +1568,7 @@ export function QuickSplitScreen() {
                         <div key={p.id} className="flex items-center justify-between text-sm gap-2">
                           <span className="text-foreground truncate">{p.displayName}</span>
                           <span className={paid ? "text-emerald-400 font-medium shrink-0" : "text-muted-foreground shrink-0"}>
-                            {paid ? "Paid ✅" : "Waiting..."}
+                            {paid ? "Zaplatené" : "Čaká sa…"}
                           </span>
                         </div>
                       );
@@ -1530,17 +1579,17 @@ export function QuickSplitScreen() {
 
             {myParticipant?.isPayer && (
               <p className="text-sm text-muted-foreground text-center px-2">
-                You are the bill payer. Others will send you their share.
+                Ste platiteľom účtu. Ostatní vám pošlú svoj podiel.
               </p>
             )}
 
             {myParticipant && !myParticipant.isPayer && myParticipant.oweToPayerCents <= 0 && (
-              <p className="text-sm text-center text-muted-foreground">You owe nothing.</p>
+              <p className="text-sm text-center text-muted-foreground">Nič nedlžíte.</p>
             )}
 
             {!allNonPayersPaid && isAdminSession && (
               <div className="rounded-2xl border border-foreground/15 bg-[#0e0e10] p-4 space-y-2">
-                <h2 className="text-sm font-semibold text-foreground mb-2">Payment overview (live)</h2>
+                <h2 className="text-sm font-semibold text-foreground mb-2">Prehľad platieb (živé)</h2>
                 <ul className="space-y-2">
                   {split.participants
                     .filter((p) => !p.isPayer)
@@ -1552,7 +1601,7 @@ export function QuickSplitScreen() {
                             {paid ? "✅" : "⏳"} {p.displayName}
                           </span>
                           <span className="text-muted-foreground shrink-0">
-                            {paid ? `paid ${formatEur(p.oweToPayerCents)}` : "waiting..."}
+                            {paid ? `zaplatené ${formatEur(p.oweToPayerCents)}` : "čaká sa…"}
                           </span>
                         </li>
                       );
@@ -1571,11 +1620,11 @@ export function QuickSplitScreen() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-2xl font-bold text-foreground">Everyone paid! 🎉</p>
-                  <p className="text-sm text-muted-foreground">Split is closed.</p>
+                  <p className="text-2xl font-bold text-foreground">Všetci zaplatili.</p>
+                  <p className="text-sm text-muted-foreground">Split je uzavretý.</p>
                 </div>
                 <Button type="button" className="w-full h-14 bg-primary text-primary-foreground" onClick={() => void closeSplit()}>
-                  Close split
+                  Uzavrieť split
                 </Button>
               </div>
             )}
@@ -1591,7 +1640,7 @@ export function QuickSplitScreen() {
               className="w-full h-9 rounded-xl text-xs text-primary bg-transparent hover:bg-background"
               onClick={() => void closeSplit()}
             >
-              End split
+              Ukončiť split
             </Button>
           </div>
         )}
@@ -1607,7 +1656,7 @@ export function QuickSplitScreen() {
           type="button"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={closePayerSheet}
-          aria-label="Close payer selection"
+          aria-label="Zavrieť výber platiteľa"
         />
         <div
           className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
@@ -1645,7 +1694,7 @@ export function QuickSplitScreen() {
                 >
                   <span className="truncate text-sm text-foreground">{displayName}</span>
                   {isSelected && (
-                    <span className="text-xs font-semibold text-[rgb(196,181,253)]">Selected</span>
+                    <span className="text-xs font-semibold text-[rgb(196,181,253)]">Vybrané</span>
                   )}
                 </button>
               );
@@ -1663,7 +1712,7 @@ export function QuickSplitScreen() {
           type="button"
           className="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
           onClick={() => void closeSplitModeSheet()}
-          aria-label="Close split mode selection"
+          aria-label="Zavrieť výber spôsobu delenia"
         />
         <div
           className={`absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-[#181a20] to-[#111318] px-5 pb-6 pt-4 shadow-2xl ${
@@ -1680,12 +1729,12 @@ export function QuickSplitScreen() {
           }}
         >
           <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/20" />
-          <h2 className="mb-3 text-base font-semibold text-foreground">Split mode</h2>
+          <h2 className="mb-3 text-base font-semibold text-foreground">Spôsob delenia</h2>
           <div className="mb-3 grid grid-cols-3 gap-2">
             {[
-              { id: "equal", label: "Equal" },
-              { id: "amount", label: "By amount" },
-              { id: "percent", label: "Percent" },
+              { id: "equal", label: "Rovnomerne" },
+              { id: "amount", label: "Podľa súm" },
+              { id: "percent", label: "Percentá" },
             ].map((mode) => {
               const selected =
                 (mode.id === "equal" && split.splitMode === "equal") ||
@@ -1712,10 +1761,10 @@ export function QuickSplitScreen() {
 
           <p className="mb-3 text-xs leading-5 text-foreground/65">
             {split.splitMode === "equal"
-              ? "Equal: choose which members are included in the split. Every selected member gets the same share."
+              ? "Rovnomerne: vyberte, kto sa započíta do delenia. Každý označený člen dostane rovnaký podiel."
               : customSplitEntryMode === "amount"
-                ? "By amount: enter the exact euro amount for each member."
-                : "Percent: enter each member's percentage of the total amount."}
+                ? "Podľa súm: zadajte presnú sumu v eurách pre každého člena."
+                : "Percentá: zadajte podiel každého člena z celkovej sumy."}
           </p>
 
           <div
@@ -1810,17 +1859,17 @@ export function QuickSplitScreen() {
                   </span>
                 ) : customLiveDeltaCents > 0 ? (
                   <span className="font-medium text-amber-300">
-                    Remaining to split {formatEur(customLiveDeltaCents)}
-                  </span>
+                  Ešte rozdeliť {formatEur(customLiveDeltaCents)}
+                </span>
                 ) : (
-                  <span className="font-medium text-emerald-400">Total matches ✅</span>
+                  <span className="font-medium text-emerald-400">Súčet sedí</span>
                 )}
               </div>
             </div>
           )}
 
           {split.splitMode === "custom_amounts" && !canCloseSplitModeSheet && (
-            <p className="text-[11px] text-amber-300">To close this popup, the total must be exactly {formatEur(displayedTotalCents)}.</p>
+            <p className="text-[11px] text-amber-300">Okno zatvoríte až keď bude súčet presne {formatEur(displayedTotalCents)}.</p>
           )}
 
           {canEditSplitting && (
@@ -1833,7 +1882,7 @@ export function QuickSplitScreen() {
               className="mt-3 w-full h-11 bg-emerald-600 text-white"
               onClick={() => void finalizeSplitting()}
             >
-              Done
+              Hotovo
             </Button>
           )}
         </div>

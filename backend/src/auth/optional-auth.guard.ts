@@ -1,7 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service';
 
-/** Nastaví `request.user` z Firebase ID tokenu, ak je hlavička platná; inak `user` zostane nevyplnené. */
 @Injectable()
 export class OptionalAuthGuard implements CanActivate {
   constructor(private readonly firebaseService: FirebaseService) {}

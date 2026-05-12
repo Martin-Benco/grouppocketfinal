@@ -1,5 +1,3 @@
-/** SessionStorage kľúče pre QuickSplit (hostia + lokálny stav tvorcu). */
-
 export const QS_ACTIVE_ID = 'gp_qs_active_id';
 
 export function qsJoinKey(splitId: string) {

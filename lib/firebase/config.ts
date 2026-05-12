@@ -25,14 +25,15 @@ if (firebaseEnabled) {
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
-  } catch (error) {
-    console.error("Firebase is not configured correctly. Check the .env.local file.", error);
+  } catch {
+    app = null;
+    auth = null;
+    db = null;
+    storage = null;
   }
-} else {
-  console.warn("Firebase API Key is not set. Create a .env.local file with Firebase credentials.");
 }
 
 export const FIREBASE_SETUP_ERROR =
-  "Firebase is not configured. Copy .env.local.example to .env.local and fill in NEXT_PUBLIC_FIREBASE_* variables.";
+  "Firebase nie je nakonfigurovaný. Skopírujte .env.local.example do .env.local a vyplňte premenné NEXT_PUBLIC_FIREBASE_*.";
 
 export { app, auth, db, storage, firebaseEnabled };

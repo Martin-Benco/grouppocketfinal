@@ -40,8 +40,6 @@ export class QuicksplitsController {
     return this.quicksplits.listMine(req.user.uid);
   }
 
-  /** Staršie upozornenia (pagination cez afterId = id poslednej zobrazenej aktivity) */
-  /** Server-Sent Events: periodicky posiela celý stav splitu (rovnaký tvar ako GET /:id). Tokeny cez query (EventSource neposiela vlastné hlavičky). */
   @Sse(':id/stream')
   @UseGuards(OptionalAuthGuard)
   stream(

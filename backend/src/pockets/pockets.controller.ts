@@ -100,4 +100,9 @@ export class PocketsController {
   ) {
     return this.pocketsService.cancelInviteForOwner(id, req.user.uid, memberUid);
   }
+
+  @Delete(':id')
+  deletePocket(@Param('id') id: string, @Req() req: { user: { uid: string } }) {
+    return this.pocketsService.deletePocketForOwner(id, req.user.uid);
+  }
 }
